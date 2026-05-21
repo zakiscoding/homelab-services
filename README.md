@@ -37,17 +37,17 @@ curl http://localhost/health
 
 Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
 
-## Services
+## Services (verified 2026-05-21)
 
-| Service | Port | Notes |
-|---------|------|-------|
-| Caddy | 80, 443 | Reverse proxy → API |
-| API | internal 8000 | FastAPI |
-| PostgreSQL | internal | Chat logs |
+| Service | Port | Tailscale (`100.91.113.98`) |
+|---------|------|-----------------------------|
+| Caddy → API | 80 | `http://100.91.113.98/health` |
+| FastAPI | internal 8000 | `/chat` (header `x-api-key`) |
+| PostgreSQL | internal | Chat logs in `data/postgres` |
 | Redis | internal | Counters |
-| Qdrant | 6333 | Vectors / RAG |
-| Prometheus | 9090 | Metrics |
-| Grafana | 3000 | Dashboards |
+| Qdrant | 6333 | `http://100.91.113.98:6333/` |
+| Prometheus | 9090 | `http://100.91.113.98:9090/-/healthy` |
+| Grafana | 3000 | `http://100.91.113.98:3000` |
 
 Persistent data: `./data/` (gitignored).
 
