@@ -230,11 +230,11 @@ def worker_heartbeat(
     x_worker_key: str | None = Header(default=None),
     x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
     x_worker_host: str | None = Header(default=None, alias="X-Worker-Host"),
-) -> dict[str, str]:
+) -> dict[str, Any]:
     require_worker_key(x_worker_key)
     worker_id = x_worker_id or "unknown-worker"
     record_worker_heartbeat(worker_id, x_worker_host)
-    return {"ok": True, "worker_id": worker_id}
+    return {"ok": "true", "worker_id": worker_id}
 
 
 @app.post("/internal/worker/jobs/claim", response_model=None)
