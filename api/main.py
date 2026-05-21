@@ -45,7 +45,8 @@ async def lifespan(app: FastAPI):
         _redis.close()
 
 
-app = FastAPI(title="Homelab API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Homelab API", version="0.4.0", lifespan=lifespan)
+app.include_router(rag_router)
 
 
 def require_api_key(x_api_key: str | None) -> None:
