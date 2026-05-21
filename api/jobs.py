@@ -19,9 +19,17 @@ JOB_COLUMNS = """
 """
 
 LEASE_MINUTES_TRAIN = 15
+LEASE_MINUTES_IMAC = 5
 BACKOFF_SECONDS = (30, 120, 600)
 
-PRIORITY = {"infer": 10, "train": 50}
+PRIORITY = {
+    "infer": 10,
+    "rag_query": 20,
+    "ingest": 30,
+    "embed": 40,
+    "train": 50,
+}
+IMAC_JOB_TYPES = ("ingest", "embed")
 
 
 def _connect():
@@ -57,21 +65,36 @@ def _get_setting(key: str, default: str = "false") -> str:
     return row[0] if row else default
 
 
-def create_job(job_type: str) -> dict[str, Any]:
+def create_job(job_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     priority = PRIORITY.get(job_type, 50)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO jobs (type, status, priority)
-                VALUES (%s, 'pending', %s)
+                INSERT INTO jobs (type, status, priority, payload)
+                VALUES (%s, 'pending', %s, %s)
                 RETURNING {JOB_COLUMNS.strip()}
                 """,
-                (job_type, priority),
+                (job_type, priority, json.dumps(payload) if payload else None),
             )
             row = cur.fetchone()
         conn.commit()
-    return _row_to_job(row)
+    job = _row_to_job(row)
+    job["payload"] = payload
+    return job
+
+
+def create_ingest_job(document_id: str) -> dict[str, Any]:
+    return create_job("ingest", {"document_id": document_id})
+
+
+def create_embed_job(collection_version: str | None = None) -> dict[str, Any]:
+    ver = collection_version or "v1_minilm_l6"
+    return create_job("embed", {"collection_version": ver})
+
+
+def create_rag_query_job() -> dict[str, Any]:
+    return create_job("rag_query")
 
 
 def create_train_job() -> dict[str, Any]:
@@ -103,8 +126,7 @@ def get_job(job_id: UUID) -> dict[str, Any] | None:
     return _row_to_job(row) if row else None
 
 
-def expire_stale_leases() -> int:
-    """Requeue expired running train jobs or mark failed if out of attempts."""
+def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> int:
     n = 0
     with _connect() as conn:
         with conn.transaction():
@@ -112,11 +134,12 @@ def expire_stale_leases() -> int:
                 cur.execute(
                     """
                     SELECT id, attempt, max_attempts FROM jobs
-                    WHERE type = 'train' AND status = 'running'
+                    WHERE type = ANY(%s) AND status = 'running'
                       AND lease_expires_at IS NOT NULL
                       AND lease_expires_at < NOW()
                     FOR UPDATE
-                    """
+                    """,
+                    (list(job_types),),
                 )
                 rows = cur.fetchall()
                 for job_id, attempt, max_attempts in rows:
@@ -153,8 +176,15 @@ def expire_stale_leases() -> int:
     return n
 
 
+def expire_stale_leases() -> int:
+    """Requeue expired running jobs (train + iMac types) or mark failed."""
+    n = _expire_leases_for_types(("train",), LEASE_MINUTES_TRAIN)
+    n += _expire_leases_for_types(IMAC_JOB_TYPES, LEASE_MINUTES_IMAC)
+    return n
+
+
 def claim_train_job(worker_id: str) -> dict[str, Any] | None:
-    expire_stale_leases()
+    _expire_leases_for_types(("train",), LEASE_MINUTES_TRAIN)
     with _connect() as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -195,7 +225,7 @@ def claim_train_job(worker_id: str) -> dict[str, Any] | None:
 
 
 def reset_stale_running_to_pending() -> int:
-    """Force-reset all running train jobs (operator / worker startup)."""
+    """Force-reset all running train + iMac jobs (operator / worker startup)."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -203,13 +233,62 @@ def reset_stale_running_to_pending() -> int:
                 UPDATE jobs
                 SET status = 'pending', locked_by = NULL,
                     started_at = NULL, lease_expires_at = NULL
-                WHERE type = 'train' AND status = 'running'
+                WHERE type IN ('train', 'ingest', 'embed') AND status = 'running'
                 RETURNING id
                 """
             )
             n = len(cur.fetchall())
         conn.commit()
     return n
+
+
+def claim_imac_job(worker_id: str) -> dict[str, Any] | None:
+    """Claim one ingest or embed job (max 1 iMac job running at a time)."""
+    _expire_leases_for_types(IMAC_JOB_TYPES, LEASE_MINUTES_IMAC)
+    with _connect() as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, type FROM jobs
+                    WHERE type IN ('ingest', 'embed') AND status = 'pending'
+                      AND scheduled_at <= NOW()
+                      AND NOT EXISTS (
+                          SELECT 1 FROM jobs
+                          WHERE type IN ('ingest', 'embed') AND status = 'running'
+                      )
+                    ORDER BY priority ASC, created_at ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                    """
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                job_id, _job_type = row[0], row[1]
+                cur.execute(
+                    f"""
+                    UPDATE jobs
+                    SET status = 'running',
+                        locked_by = %s,
+                        started_at = COALESCE(started_at, NOW()),
+                        lease_expires_at = NOW() + INTERVAL '{LEASE_MINUTES_IMAC} minutes',
+                        error_message = NULL,
+                        error_class = NULL
+                    WHERE id = %s
+                    RETURNING {JOB_COLUMNS}
+                    """,
+                    (worker_id, job_id),
+                )
+                updated = cur.fetchone()
+                cur.execute("SELECT payload FROM jobs WHERE id = %s", (job_id,))
+                payload_row = cur.fetchone()
+    job = _row_to_job(updated)
+    if payload_row and payload_row[0]:
+        job["payload"] = payload_row[0] if isinstance(payload_row[0], dict) else json.loads(payload_row[0])
+    else:
+        job["payload"] = {}
+    return job
 
 
 def mark_job_running(job_id: UUID) -> None:
@@ -398,13 +477,27 @@ def get_system_status(gpu_url: str) -> dict[str, Any]:
         status["jobs"]["by_type"].get("train", {}).get("running", 0) == 0
     )
 
-    status["rag"] = {"health": "unknown", "qdrant_ready": False}
+    status["rag"] = {
+        "health": "unknown",
+        "qdrant_ready": False,
+        "active_collection_version": None,
+        "embedding_model_id": EMBEDDING_MODEL_ID,
+        "pending_chunks": 0,
+    }
     try:
         import httpx
+
+        from rag_engine import EMBEDDING_MODEL_ID
+        from rag_store import count_pending_chunks, get_active_alias
 
         r = httpx.get("http://qdrant:6333/readyz", timeout=3.0)
         status["rag"]["qdrant_ready"] = r.status_code == 200
         status["rag"]["health"] = "ok" if r.status_code == 200 else "degraded"
+        alias = get_active_alias()
+        if alias:
+            status["rag"]["active_collection_version"] = alias["collection_version"]
+            status["rag"]["embedding_model_id"] = alias["embedding_model_id"]
+            status["rag"]["pending_chunks"] = count_pending_chunks(alias["collection_version"])
     except Exception:
         status["rag"]["health"] = "degraded"
 

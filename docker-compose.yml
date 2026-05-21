@@ -10,6 +10,7 @@ services:
       GPU_URL: ${GPU_URL}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
       API_KEY: ${API_KEY}
       WORKER_API_KEY: ${WORKER_API_KEY}
     depends_on:
@@ -19,6 +20,29 @@ services:
         condition: service_started
     expose:
       - "8000"
+    networks:
+      - backend
+
+  imac-worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:8000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      WORKER_API_KEY: ${WORKER_API_KEY}
+      WORKER_ID: imac-worker
+    depends_on:
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     networks:
       - backend
 

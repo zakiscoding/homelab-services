@@ -11,6 +11,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from jobs import (
+    claim_imac_job,
     claim_train_job,
     create_infer_job,
     create_train_job,
@@ -23,6 +24,7 @@ from jobs import (
     record_worker_heartbeat,
     reset_stale_running_to_pending,
 )
+from rag_routes import router as rag_router
 
 GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -235,6 +237,25 @@ def worker_heartbeat(
     worker_id = x_worker_id or "unknown-worker"
     record_worker_heartbeat(worker_id, x_worker_host)
     return {"ok": "true", "worker_id": worker_id}
+
+
+@app.post("/internal/worker/jobs/claim-imac", response_model=None)
+def worker_claim_imac(
+    x_worker_key: str | None = Header(default=None),
+    x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
+):
+    require_worker_key(x_worker_key)
+    worker_id = x_worker_id or "imac-worker"
+    record_worker_heartbeat(worker_id)
+    try:
+        job = claim_imac_job(worker_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    if not job:
+        return Response(status_code=204)
+    base = JobResponse(**{k: job[k] for k in JobResponse.model_fields if k in job}).model_dump()
+    base["payload"] = job.get("payload") or {}
+    return base
 
 
 @app.post("/internal/worker/jobs/claim", response_model=None)
