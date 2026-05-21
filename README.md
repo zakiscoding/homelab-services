@@ -24,15 +24,18 @@ Client / controller
    (training = separate homelab-gpu repo later)
 ```
 
-## Quick start
+## Docker: Colima (1TB drive)
+
+We use **Colima**, not Docker Desktop. VM disk: `/Volumes/1tb drive/colima`.
 
 ```bash
-cd "/Volumes/1tb drive/homelab-services"
-cp .env.example .env          # edit GPU_URL, passwords, API_KEY
-mkdir -p data/{postgres,redis,qdrant,prometheus,grafana,caddy,caddy-config}
-docker compose up -d --build
+brew install colima docker docker-compose
+./scripts/setup-1tb.sh
+./scripts/start-stack.sh
 curl http://localhost/health
 ```
+
+Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
 
 ## Services
 

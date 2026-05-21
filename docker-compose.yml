@@ -30,7 +30,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -61,8 +61,11 @@ services:
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/config/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/config:/etc/prometheus/config:ro
       - ./data/prometheus:/prometheus
     ports:
       - "9090:9090"
@@ -72,6 +75,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     restart: unless-stopped
+    user: "0"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
@@ -87,11 +91,11 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    command: ["caddy", "reverse-proxy", "--from", ":80", "--to", "api:8000"]
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
       - ./data/caddy-config:/config
     depends_on:
