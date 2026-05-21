@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Add GPU node exporter when installed on zak_pc
+  # - job_name: gpu-node
+  #   static_configs:
+  #     - targets: ["100.88.71.33:9100"]
