@@ -66,10 +66,10 @@ def log_chat(prompt: str, response: str, model: str, duration_ms: int, job_id: s
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO chat_logs (prompt, response, model, duration_ms)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO chat_logs (prompt, response, model, duration_ms, job_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (prompt, response, model, duration_ms),
+                    (prompt, response, model, duration_ms, job_id),
                 )
             conn.commit()
     except Exception:
