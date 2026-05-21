@@ -7,7 +7,7 @@ if [[ -f ./scripts/docker-1tb-env.sh ]]; then
   source ./scripts/docker-1tb-env.sh
 fi
 
-: "${POSTGRES_USER:=homelab}"
+: "${POSTGRES_USER:=app}"
 : "${POSTGRES_DB:=homelab}"
 
 echo "Applying postgres/002_jobs.sql ..."
