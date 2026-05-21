@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from jobs import (
     claim_imac_job,
     claim_train_job,
+    create_experiment_for_job,
     create_infer_job,
     create_train_job,
     expire_stale_leases,
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
         _redis.close()
 
 
-app = FastAPI(title="Homelab API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Homelab API", version="0.5.0", lifespan=lifespan)
 app.include_router(rag_router)
 
 
@@ -112,6 +113,21 @@ class JobFailBody(BaseModel):
     error_message: str = Field(..., min_length=1)
     error_class: str = "transient"
     retry: bool | None = None
+
+
+class TrainJobCreate(BaseModel):
+    dataset_version: str | None = None
+    model_version: str | None = None
+    base_model: str | None = None
+
+
+class ExperimentBody(BaseModel):
+    run_id: str | None = None
+    dataset_version: str | None = None
+    model_version: str | None = None
+    git_commit: str | None = None
+    hyperparams: dict[str, Any] | None = None
+    output_path: str | None = None
 
 
 @app.get("/health")
@@ -208,10 +224,18 @@ def stats(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
 
 
 @app.post("/jobs", response_model=JobResponse)
-def jobs_create_train(x_api_key: str | None = Header(default=None)) -> JobResponse:
+def jobs_create_train(
+    body: TrainJobCreate | None = None,
+    x_api_key: str | None = Header(default=None),
+) -> JobResponse:
     require_api_key(x_api_key)
+    b = body or TrainJobCreate()
     try:
-        job = create_train_job()
+        job = create_train_job(
+            dataset_version=b.dataset_version,
+            model_version=b.model_version,
+            base_model=b.base_model,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
@@ -273,7 +297,33 @@ def worker_claim_train(
         raise HTTPException(status_code=500, detail=str(e)) from e
     if not job:
         return Response(status_code=204)
-    return JobResponse(**job)
+    base = JobResponse(**{k: job[k] for k in JobResponse.model_fields if k in job}).model_dump()
+    base["payload"] = job.get("payload") or {}
+    return base
+
+
+@app.post("/internal/worker/jobs/{job_id}/experiment")
+def worker_record_experiment(
+    job_id: UUID,
+    body: ExperimentBody,
+    x_worker_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    require_worker_key(x_worker_key)
+    job = get_job(job_id)
+    if not job or job["status"] not in ("running", "succeeded"):
+        raise HTTPException(status_code=409, detail="Job not running or not found")
+    try:
+        return create_experiment_for_job(
+            job_id,
+            run_id=body.run_id,
+            dataset_version=body.dataset_version,
+            model_version=body.model_version,
+            git_commit=body.git_commit,
+            hyperparams=body.hyperparams,
+            output_path=body.output_path,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/internal/worker/jobs/{job_id}/succeeded", response_model=JobResponse)

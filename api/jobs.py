@@ -97,10 +97,25 @@ def create_rag_query_job() -> dict[str, Any]:
     return create_job("rag_query")
 
 
-def create_train_job() -> dict[str, Any]:
+def create_train_job(
+    *,
+    dataset_version: str | None = None,
+    model_version: str | None = None,
+    base_model: str | None = None,
+    hyperparams: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if _get_setting("training_paused") == "true":
         raise RuntimeError("training_paused is true")
-    return create_job("train")
+    payload: dict[str, Any] = {}
+    if dataset_version:
+        payload["dataset_version"] = dataset_version
+    if model_version:
+        payload["model_version"] = model_version
+    if base_model:
+        payload["base_model"] = base_model
+    if hyperparams:
+        payload.update(hyperparams)
+    return create_job("train", payload or None)
 
 
 def create_infer_job() -> dict[str, Any]:
@@ -221,7 +236,16 @@ def claim_train_job(worker_id: str) -> dict[str, Any] | None:
                     (worker_id, job_id),
                 )
                 updated = cur.fetchone()
-    return _row_to_job(updated)
+                cur.execute("SELECT payload FROM jobs WHERE id = %s", (job_id,))
+                payload_row = cur.fetchone()
+    job = _row_to_job(updated)
+    if payload_row and payload_row[0]:
+        job["payload"] = (
+            payload_row[0] if isinstance(payload_row[0], dict) else json.loads(payload_row[0])
+        )
+    else:
+        job["payload"] = {}
+    return job
 
 
 def reset_stale_running_to_pending() -> int:
