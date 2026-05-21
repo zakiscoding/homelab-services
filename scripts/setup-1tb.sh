@@ -4,10 +4,10 @@ set -euo pipefail
 
 DRIVE="/Volumes/1tb drive"
 SERVICES="$DRIVE/homelab-services"
-COLIMA_HOME="$DRIVE/colima"
+COLIMA_HOME="$DRIVE/homelab-runtime/colima"
 
 export COLIMA_HOME
-export DOCKER_CONFIG="$DRIVE/docker-config"
+export DOCKER_CONFIG="$DRIVE/homelab-runtime/docker-config"
 mkdir -p "$COLIMA_HOME" "$DOCKER_CONFIG" "$SERVICES/data"/{postgres,redis,qdrant,prometheus,grafana,caddy,caddy-config}
 
 if [[ ! -f "$DOCKER_CONFIG/config.json" ]]; then
@@ -38,13 +38,10 @@ if ! command -v colima &>/dev/null; then
 fi
 
 if ! colima status 2>&1 | grep -q "Running"; then
-  echo "==> Starting Colima (VM disk on 1TB: $COLIMA_HOME)"
-  colima start --cpu 4 --memory 6 --disk 80
+  echo "==> Starting Colima (VM: $COLIMA_HOME)"
+  colima start --cpu 4 --memory 6 --disk 80 --mount-type virtiofs --mount "$DRIVE:w"
 fi
 
-eval "$(colima docker-env)"
-echo "==> Docker ready. Pull and start stack:"
-echo "    cd \"$SERVICES\""
-echo "    docker compose pull"
-echo "    docker compose up -d --build"
-echo "    curl http://localhost/health"
+docker context use colima 2>/dev/null || true
+echo "==> Docker ready. Start stack:"
+echo "    $SERVICES/scripts/start-stack.sh"
