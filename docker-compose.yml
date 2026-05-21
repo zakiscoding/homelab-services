@@ -11,6 +11,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       API_KEY: ${API_KEY}
+      WORKER_API_KEY: ${WORKER_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
