@@ -1,8 +1,5 @@
 {
-  "overwrite": true,
-  "folder": "Homelab",
-  "dashboard": {
-    "id": null,
+  "id": null,
     "uid": "homelab-overview",
     "title": "Homelab ML Platform",
     "tags": ["homelab", "phase5"],
@@ -149,5 +146,4 @@
         }
       }
     ]
-  }
 }
