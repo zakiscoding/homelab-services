@@ -20,6 +20,7 @@ WORKER_HOST = os.environ.get("WORKER_HOST", socket.gethostname())
 POLL_INTERVAL = float(os.environ.get("WORKER_POLL_SEC", "10"))
 
 sys.path.insert(0, "/app")
+from job_wake import WAKE_IMAC, wait_for_wake  # noqa: E402
 from run_embed import run_embed_job  # noqa: E402
 from run_ingest import run_ingest_job  # noqa: E402
 
@@ -109,17 +110,24 @@ def main() -> None:
         print("WORKER_API_KEY is not set", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[imac-worker] id={WORKER_ID} api={API_BASE} poll={POLL_INTERVAL}s")
+    notify = os.environ.get("JOB_NOTIFY_ENABLED", "true").lower() == "true"
+    print(
+        f"[imac-worker] id={WORKER_ID} api={API_BASE} poll={POLL_INTERVAL}s notify={notify}"
+    )
     with httpx.Client(timeout=120.0) as client:
         reset_stale(client)
         while True:
             try:
-                run_once(client)
+                processed = run_once(client)
             except httpx.HTTPError as e:
                 print(f"[imac-worker] HTTP error: {e}")
+                processed = False
             if args.once:
                 break
-            time.sleep(POLL_INTERVAL)
+            if not processed:
+                wait_for_wake([WAKE_IMAC], POLL_INTERVAL)
+            else:
+                time.sleep(0.2)
 
 
 if __name__ == "__main__":

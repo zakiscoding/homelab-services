@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 
 import psycopg
 
+from job_notify import notify_job_pending, notify_jobs
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 JOB_COLUMNS = """
@@ -81,6 +83,7 @@ def create_job(job_type: str, payload: dict[str, Any] | None = None) -> dict[str
         conn.commit()
     job = _row_to_job(row)
     job["payload"] = payload
+    notify_job_pending(job_type, job["id"])
     return job
 
 
@@ -148,7 +151,7 @@ def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> 
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, attempt, max_attempts FROM jobs
+                    SELECT id, type, attempt, max_attempts FROM jobs
                     WHERE type = ANY(%s) AND status = 'running'
                       AND lease_expires_at IS NOT NULL
                       AND lease_expires_at < NOW()
@@ -157,7 +160,8 @@ def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> 
                     (list(job_types),),
                 )
                 rows = cur.fetchall()
-                for job_id, attempt, max_attempts in rows:
+                requeued: list[tuple[str, str]] = []
+                for job_id, job_type, attempt, max_attempts in rows:
                     if attempt + 1 < max_attempts:
                         cur.execute(
                             """
@@ -174,6 +178,7 @@ def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> 
                             """,
                             (BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)], job_id),
                         )
+                        requeued.append((job_type, str(job_id)))
                     else:
                         cur.execute(
                             """
@@ -188,6 +193,7 @@ def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> 
                         )
                     n += 1
         conn.commit()
+    notify_jobs(requeued)
     return n
 
 
@@ -258,11 +264,13 @@ def reset_stale_running_to_pending() -> int:
                 SET status = 'pending', locked_by = NULL,
                     started_at = NULL, lease_expires_at = NULL
                 WHERE type IN ('train', 'ingest', 'embed') AND status = 'running'
-                RETURNING id
+                RETURNING id, type
                 """
             )
-            n = len(cur.fetchall())
+            rows = cur.fetchall()
+            n = len(rows)
         conn.commit()
+    notify_jobs([(r[1], str(r[0])) for r in rows])
     return n
 
 
@@ -408,7 +416,10 @@ def mark_job_failed(
                     )
                 out = cur.fetchone()
         conn.commit()
-    return _row_to_job(out) if out else None
+    job = _row_to_job(out) if out else None
+    if job and job.get("status") == "pending":
+        notify_job_pending(job["type"], job["id"])
+    return job
 
 
 def record_worker_heartbeat(worker_id: str, host: str | None = None) -> None:
@@ -432,6 +443,7 @@ def get_system_status(gpu_url: str) -> dict[str, Any]:
     status: dict[str, Any] = {
         "timestamp": now,
         "control_plane": "postgres",
+        "job_notify": {},
         "jobs": {"pending": 0, "running": 0, "failed_last_24h": 0, "by_type": {}},
         "queue_depth": {},
         "workers": {},
@@ -441,6 +453,13 @@ def get_system_status(gpu_url: str) -> dict[str, Any]:
         },
         "recent_failures": [],
     }
+
+    try:
+        from job_notify import status as job_notify_status
+
+        status["job_notify"] = job_notify_status()
+    except Exception:
+        status["job_notify"] = {"enabled": False}
 
     with _connect() as conn:
         with conn.cursor() as cur:

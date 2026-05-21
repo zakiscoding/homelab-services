@@ -70,6 +70,9 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - ./data/redis:/data
+    ports:
+      # Phase 4: GPU worker wake (Tailscale/LAN only — do not expose to internet)
+      - "6379:6379"
     networks:
       - backend
 
@@ -83,14 +86,31 @@ services:
     networks:
       - backend
 
+  pushgateway:
+    image: prom/pushgateway:latest
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    networks:
+      - backend
+
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
     user: "0"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
     volumes:
+      - ./prometheus/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./data/prometheus:/prometheus
     ports:
       - "9090:9090"
+    depends_on:
+      - api
+      - qdrant
+      - pushgateway
     networks:
       - backend
 
@@ -101,8 +121,11 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
     volumes:
       - ./data/grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
     depends_on:

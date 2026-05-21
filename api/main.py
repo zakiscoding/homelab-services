@@ -25,6 +25,7 @@ from jobs import (
     record_worker_heartbeat,
     reset_stale_running_to_pending,
 )
+from metrics import metrics_body, prometheus_middleware
 from rag_routes import router as rag_router
 
 GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
@@ -46,8 +47,15 @@ async def lifespan(app: FastAPI):
         _redis.close()
 
 
-app = FastAPI(title="Homelab API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Homelab API", version="0.7.0", lifespan=lifespan)
 app.include_router(rag_router)
+prometheus_middleware(app)
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    """Prometheus scrape target (internal / LAN — no API key)."""
+    return Response(content=metrics_body(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 def require_api_key(x_api_key: str | None) -> None:
