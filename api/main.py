@@ -167,11 +167,11 @@ def jobs_get(job_id: UUID, x_api_key: str | None = Header(default=None)) -> JobR
     return JobResponse(**job)
 
 
-@app.post("/internal/worker/jobs/claim")
+@app.post("/internal/worker/jobs/claim", response_model=None)
 def worker_claim_train(
     x_worker_key: str | None = Header(default=None),
     x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
-) -> Response | JobResponse:
+):
     """GPU worker claims one pending train job (SKIP LOCKED)."""
     require_worker_key(x_worker_key)
     worker_id = x_worker_id or "unknown-worker"
