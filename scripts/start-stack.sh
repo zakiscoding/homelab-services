@@ -17,5 +17,7 @@ fi
 docker-compose pull
 docker-compose up -d --build
 docker-compose ps
-sleep 3
+sleep 5
+bash "$SCRIPT_DIR/sync-prometheus-config.sh" || true
+bash "$SCRIPT_DIR/sync-grafana-provisioning.sh" || true
 curl -sf http://localhost/health && echo "" || echo "Health check pending — run: docker-compose logs api caddy"
