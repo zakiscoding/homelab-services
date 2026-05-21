@@ -61,11 +61,8 @@ services:
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
-    command:
-      - "--config.file=/etc/prometheus/config/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
+    user: "0"
     volumes:
-      - ./prometheus/config:/etc/prometheus/config:ro
       - ./data/prometheus:/prometheus
     ports:
       - "9090:9090"
