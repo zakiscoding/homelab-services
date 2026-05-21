@@ -103,7 +103,7 @@ services:
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
     volumes:
-      - ./prometheus/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/config:/etc/prometheus:ro
       - ./data/prometheus:/prometheus
     ports:
       - "9090:9090"
