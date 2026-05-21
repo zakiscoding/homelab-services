@@ -121,11 +121,10 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
-      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      # Provisioning lives under data/grafana/ (see scripts/sync-grafana-provisioning.sh)
+      GF_PATHS_PROVISIONING: /var/lib/grafana/provisioning
     volumes:
       - ./data/grafana:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
     depends_on:
