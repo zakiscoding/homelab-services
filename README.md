@@ -16,7 +16,7 @@ Client / controller
         │
         ▼
    iMac (this repo)
-   Caddy :80 → FastAPI → Postgres / Redis
+   Caddy :80/:443 → Web UI → FastAPI (internal) → Postgres / Redis
         │
         │  Tailscale
         ▼
@@ -41,7 +41,7 @@ Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
 
 | Service | Port | Tailscale (`100.91.113.98`) |
 |---------|------|-----------------------------|
-| Caddy → API | 80 | `http://100.91.113.98/health` |
+| Caddy → Web UI | 80, 443 | `http://100.91.113.98/` — public HTTPS when `DOMAIN` set ([homelab docs](https://github.com/zakiscoding/homelab/blob/main/docs/deploy/public-internet.md)) |
 | FastAPI | internal 8000 | `/chat`, `/jobs` (header `x-api-key`) |
 | GPU worker API | internal | `/internal/worker/*` (header `X-Worker-Key`) — [homelab docs PHASE-0A](https://github.com/zakiscoding/homelab/blob/main/docs/PHASE-0A.md) |
 | PostgreSQL | internal | Chat logs in `data/postgres` |

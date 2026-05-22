@@ -1,4 +1,3 @@
-# HTTP reverse proxy to FastAPI (add your domain block when ready)
-:80 {
-    reverse_proxy api:8000
-}
+# Legacy placeholder — active config is generated at data/caddy/Caddyfile
+# Run: ./scripts/render-caddyfile.sh
+# Templates: Caddyfile.lan | Caddyfile.public.tpl

@@ -1,0 +1,6 @@
+# LAN / Tailscale only — no public domain configured.
+# Set DOMAIN in .env and run scripts/render-caddyfile.sh for HTTPS on the internet.
+
+:80 {
+	reverse_proxy web:3000
+}
