@@ -33,31 +33,32 @@ $content = $content.Replace('change-me-worker-key-different-from-api-key', $work
 $content = $content.Replace('change-me-strong', $pgPass)
 $content = $content.Replace('GRAFANA_PASSWORD=change-me', "GRAFANA_PASSWORD=$gfPass")
 
-$lines = @(
-    "",
-    "# --- Public site ($SiteLabel) ---",
-    "# Browser login user=$webUser password=$webPass",
-    "WEB_AUTH_USER=$webUser"
-)
-$hash = $null
-if (Get-Command docker -ErrorAction SilentlyContinue) {
-    $hash = (docker run --rm caddy:2-alpine caddy hash-password --plaintext $webPass 2>$null).Trim()
-}
-if ($hash) {
-    $lines += "WEB_AUTH_HASH='$hash'"
-}
+$lines = @()
 if ($Domain) {
+    $lines += ""
+    $lines += "# --- Public HTTPS ($SiteLabel) ---"
+    $lines += "WEB_AUTH_USER=$webUser"
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $hash = (docker run --rm caddy:2-alpine caddy hash-password --plaintext $webPass 2>$null).Trim()
+        if ($hash) { $lines += "WEB_AUTH_HASH='$hash'" }
+    }
     $lines += "DOMAIN=$Domain"
     $lines += "ACME_EMAIL=admin@$Domain"
+    $lines += "# Browser password: $webPass"
 }
 
-$content = $content.TrimEnd() + [Environment]::NewLine + ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+if ($lines.Count -gt 0) {
+    $content = $content.TrimEnd() + [Environment]::NewLine + ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+} else {
+    $content = $content.TrimEnd() + [Environment]::NewLine
+}
 Set-Content -Path ".env" -Value $content -Encoding utf8
 
 Write-Host "Created $Root\.env"
-Write-Host "  Web login: $webUser / $webPass"
-if (-not $Domain) {
-    Write-Host "  DOMAIN not set - LAN/Tailscale works; add a real domain for public HTTPS."
+if ($Domain) {
+    Write-Host "  Web login: $webUser / $webPass"
+} else {
+    Write-Host "  UI: http://100.91.113.98:3080 (Tailscale, no domain)"
 }
 
 $WebRoot = Join-Path (Split-Path $Root -Parent) "homelab-web"

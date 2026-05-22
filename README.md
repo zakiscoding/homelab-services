@@ -41,7 +41,7 @@ Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
 
 | Service | Port | Tailscale (`100.91.113.98`) |
 |---------|------|-----------------------------|
-| Caddy → Web UI | 80, 443 | `http://100.91.113.98/` — public HTTPS when `DOMAIN` set ([homelab docs](https://github.com/zakiscoding/homelab/blob/main/docs/deploy/public-internet.md)) |
+| Caddy → Web UI | 80 | `http://100.91.113.98/` (Tailscale / LAN) |
 | FastAPI | internal 8000 | `/chat`, `/jobs` (header `x-api-key`) |
 | GPU worker API | internal | `/internal/worker/*` (header `X-Worker-Key`) — [homelab docs PHASE-0A](https://github.com/zakiscoding/homelab/blob/main/docs/PHASE-0A.md) |
 | PostgreSQL | internal | Chat logs in `data/postgres` |
