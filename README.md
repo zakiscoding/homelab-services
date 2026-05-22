@@ -49,6 +49,7 @@ Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
 | Qdrant | 6333 | `http://100.91.113.98:6333/` |
 | Prometheus | 9090 | `http://100.91.113.98:9090/-/healthy` |
 | Grafana | 3000 | `http://100.91.113.98:3000` |
+| **Web UI** (`homelab-web`) | **3080** | `http://100.91.113.98:3080` — chat, RAG, status |
 
 Persistent data: `./data/` (gitignored).
 

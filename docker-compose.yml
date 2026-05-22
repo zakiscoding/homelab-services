@@ -132,6 +132,23 @@ services:
     networks:
       - backend
 
+  web:
+    build:
+      context: ../homelab-web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HOMELAB_API_URL: http://api:8000
+      HOMELAB_API_KEY: ${API_KEY}
+    ports:
+      # Grafana uses host :3000 — web UI on :3080
+      - "3080:3000"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - backend
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
