@@ -32,7 +32,7 @@ We use **Colima**, not Docker Desktop. VM disk: `/Volumes/1tb drive/colima`.
 brew install colima docker docker-compose
 ./scripts/setup-1tb.sh
 ./scripts/start-stack.sh
-curl http://localhost/health
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3080/
 ```
 
 Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
@@ -67,3 +67,14 @@ Never commit `.env`. Create it once:
 ./scripts/bootstrap-env.sh          # iMac / Linux
 # Windows laptop: .\scripts\bootstrap-env.ps1
 ```
+
+## Web UI scripts
+
+| Script | Purpose |
+|--------|---------|
+| `ensure-homelab-web.sh` | Clone sibling `homelab-web` repo |
+| `render-caddyfile.sh` | LAN or public Caddy config |
+| `sync-caddy-config.sh` | Colima-safe Caddyfile inject when `DOMAIN` set |
+| `bootstrap-env.sh` | Generate `.env` |
+
+Docs: [homelab web-ui.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/web-ui.md)
