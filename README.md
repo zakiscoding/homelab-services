@@ -61,4 +61,9 @@ git pull
 git add . && git commit -m "..." && git push
 ```
 
-Never commit `.env`.
+Never commit `.env`. Create it once:
+
+```bash
+./scripts/bootstrap-env.sh          # iMac / Linux
+# Windows laptop: .\scripts\bootstrap-env.ps1
+```
