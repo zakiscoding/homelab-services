@@ -11,12 +11,25 @@ TPL="${ROOT}/caddy/Caddyfile.public.tpl"
 
 mkdir -p "$(dirname "$OUT")"
 
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "$ENV_FILE"
-  set +a
-fi
+# Read .env without bash expanding $ in WEB_AUTH_HASH (bcrypt: $2a$14$…)
+read_env() {
+  local key="$1"
+  [[ -f "$ENV_FILE" ]] || return 0
+  local line
+  line="$(grep -E "^${key}=" "$ENV_FILE" | tail -1)" || return 0
+  line="${line#${key}=}"
+  line="${line%$'\r'}"
+  line="${line#\"}"
+  line="${line%\"}"
+  line="${line#\'}"
+  line="${line%\'}"
+  printf '%s' "$line"
+}
+
+DOMAIN="$(read_env DOMAIN)"
+ACME_EMAIL="$(read_env ACME_EMAIL)"
+WEB_AUTH_USER="$(read_env WEB_AUTH_USER)"
+WEB_AUTH_HASH="$(read_env WEB_AUTH_HASH)"
 
 if [[ -z "${DOMAIN:-}" ]]; then
   cp "$LAN" "$OUT"
