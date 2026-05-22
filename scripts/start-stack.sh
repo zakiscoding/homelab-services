@@ -21,5 +21,8 @@ docker-compose ps
 sleep 5
 bash "$SCRIPT_DIR/sync-prometheus-config.sh" || true
 bash "$SCRIPT_DIR/sync-grafana-provisioning.sh" || true
+if grep -qE '^DOMAIN=.+' .env 2>/dev/null; then
+  bash "$SCRIPT_DIR/sync-caddy-config.sh" || true
+fi
 curl -sf http://localhost/ >/dev/null && echo "Web UI OK (http://localhost/)" || echo "Web check pending — run: docker-compose logs web caddy"
 docker-compose exec -T api wget -qO- http://127.0.0.1:8000/health 2>/dev/null && echo "API OK" || true
