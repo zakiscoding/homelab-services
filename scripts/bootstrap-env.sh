@@ -43,7 +43,7 @@ if [[ -n "$DOMAIN_ARG" ]]; then
 fi
 
 echo "Created $ROOT/.env"
-[[ -z "$DOMAIN_ARG" ]] && echo "  UI: http://100.91.113.98:3080 (Tailscale, no domain)"
+[[ -z "$DOMAIN_ARG" ]] && echo "  UI: http://100.91.113.98:3081 (Tailscale, no domain)"
 
 PARENT="$(dirname "$ROOT")"
 if [[ -f "$PARENT/homelab-web/.env.local.example" ]]; then

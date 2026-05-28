@@ -1,0 +1,161 @@
+{
+  "uid": "homelab-stack",
+  "title": "Homelab Stack",
+  "tags": ["homelab", "gpu", "vision", "mlflow"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "links": [
+    { "title": "MLflow", "url": "http://100.91.113.98:5001", "targetBlank": true, "type": "link" },
+    { "title": "Web UI", "url": "http://100.91.113.98:3081", "targetBlank": true, "type": "link" },
+    { "title": "Reactions", "url": "http://100.91.113.98:3081/reactions", "targetBlank": true, "type": "link" }
+  ],
+  "panels": [
+    { "id": 100, "type": "row", "title": "GPU PC ??? zak_pc (i7-14700F + RTX 5070)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+    {
+      "id": 1, "title": "Host CPU %", "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_host_cpu_percent{job=\"gpu\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 90 }] } } }
+    },
+    {
+      "id": 2, "title": "Host RAM used", "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "100 * homelab_host_memory_used_mib / homelab_host_memory_total_mib", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 3, "title": "GPU util %", "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_gpu_utilization_percent", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 4, "title": "VRAM used / total", "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "homelab_gpu_memory_used_mib", "legendFormat": "used MiB", "refId": "A" },
+        { "expr": "homelab_gpu_memory_total_mib", "legendFormat": "total MiB", "refId": "B" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5, "title": "GPU temp ??C", "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_gpu_temperature_c", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "celsius" } }
+    },
+    {
+      "id": 6, "title": "Services up", "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "homelab_reaction_serve_up", "legendFormat": "reaction :8100", "refId": "A" },
+        { "expr": "homelab_ollama_up", "legendFormat": "ollama :11434", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }] } }
+    },
+    {
+      "id": 7, "title": "GPU PC ??? CPU & RAM over time", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "homelab_host_cpu_percent", "legendFormat": "CPU %", "refId": "A" },
+        { "expr": "homelab_host_memory_used_mib", "legendFormat": "RAM used MiB", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } } }
+    },
+    {
+      "id": 8, "title": "GPU util & VRAM", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "homelab_gpu_utilization_percent", "legendFormat": "GPU %", "refId": "A" },
+        { "expr": "homelab_gpu_memory_used_mib", "legendFormat": "VRAM MiB", "refId": "B" }
+      ]
+    },
+    { "id": 101, "type": "row", "title": "Jobs & workers (iMac API)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "collapsed": false },
+    {
+      "id": 9, "title": "Pending jobs", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_jobs_pending", "legendFormat": "{{type}}", "refId": "A" }]
+    },
+    {
+      "id": 10, "title": "Running jobs", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_jobs_running", "legendFormat": "{{type}}", "refId": "A" }]
+    },
+    {
+      "id": 11, "title": "Failed jobs (24h)", "type": "stat",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(homelab_jobs_failed_24h)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } } }
+    },
+    {
+      "id": 12, "title": "Worker heartbeat age (s)", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_worker_last_seen_age_seconds", "legendFormat": "{{worker_id}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 300 }] } } }
+    },
+    { "id": 102, "type": "row", "title": "Web API & reaction vision", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 }, "collapsed": false },
+    {
+      "id": 13, "title": "API request rate by status", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(homelab_http_requests_total[5m])) by (status)", "legendFormat": "{{status}}", "refId": "A" }]
+    },
+    {
+      "id": 14, "title": "Vision /reaction requests", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(homelab_vision_requests_total[5m])) by (endpoint, status)", "legendFormat": "{{endpoint}} {{status}}", "refId": "A" }]
+    },
+    {
+      "id": 15, "title": "Chat & vision endpoints (req/s)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(homelab_http_requests_total{endpoint=~\"/chat.*\"}[5m]))", "legendFormat": "/chat", "refId": "A" },
+        { "expr": "sum(rate(homelab_http_requests_total{endpoint=~\"/vision.*\"}[5m]))", "legendFormat": "/vision", "refId": "B" },
+        { "expr": "sum(rate(homelab_http_requests_total{endpoint=~\"/jobs.*\"}[5m]))", "legendFormat": "/jobs", "refId": "C" }
+      ]
+    },
+    {
+      "id": 16, "title": "Vision latency p95 (s)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(homelab_vision_request_duration_seconds_bucket[5m])) by (le, endpoint))", "legendFormat": "{{endpoint}}", "refId": "A" }]
+    },
+    { "id": 103, "type": "row", "title": "RAG (Qdrant) & chat", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 }, "collapsed": false },
+    {
+      "id": 17, "title": "Qdrant collections", "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "collections_total", "refId": "A" }]
+    },
+    {
+      "id": 18, "title": "Redis chat requests (total)", "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_redis_requests_total", "refId": "A" }]
+    },
+    {
+      "id": 19, "title": "Job notify queue depth", "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "homelab_job_notify_queue_depth", "legendFormat": "{{queue}}", "refId": "A" }]
+    }
+  ]
+}
+

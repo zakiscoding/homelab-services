@@ -8,6 +8,8 @@ services:
     env_file: .env
     environment:
       GPU_URL: ${GPU_URL}
+      GPU_VISION_URL: ${GPU_VISION_URL:-http://100.88.71.33:8100}
+      REACTION_SERVE_KEY: ${REACTION_SERVE_KEY:-}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
@@ -20,6 +22,9 @@ services:
         condition: service_started
     expose:
       - "8000"
+    ports:
+      # Tailscale/LAN: GPU worker + ops (do not port-forward to internet)
+      - "8000:8000"
     networks:
       - backend
 
@@ -132,6 +137,29 @@ services:
     networks:
       - backend
 
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.19.0
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        pip install -q psycopg2-binary &&
+        exec mlflow server
+        --host=0.0.0.0
+        --port=5000
+        --backend-store-uri=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+        --default-artifact-root=/mlflow-artifacts
+        --serve-artifacts
+    volumes:
+      - ./data/mlflow:/mlflow-artifacts
+    ports:
+      - "5001:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
   web:
     build:
       context: ../homelab-web
@@ -141,8 +169,8 @@ services:
       HOMELAB_API_URL: http://api:8000
       HOMELAB_API_KEY: ${API_KEY}
     ports:
-      # Grafana uses host :3000 — web UI on :3080
-      - "3080:3000"
+      # Grafana uses host :3000 — web UI on :3081 (3080 may be taken by SSH/Tailscale on iMac)
+      - "3081:3000"
     depends_on:
       api:
         condition: service_started
@@ -170,3 +198,4 @@ services:
 networks:
   backend:
     driver: bridge
+

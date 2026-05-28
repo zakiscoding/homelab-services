@@ -26,7 +26,9 @@ from jobs import (
     reset_stale_running_to_pending,
 )
 from metrics import metrics_body, prometheus_middleware
+from train_plan import get_train_plan
 from rag_routes import router as rag_router
+from vision_routes import router as vision_router
 
 GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -47,8 +49,9 @@ async def lifespan(app: FastAPI):
         _redis.close()
 
 
-app = FastAPI(title="Homelab API", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Homelab API", version="0.8.0", lifespan=lifespan)
 app.include_router(rag_router)
+app.include_router(vision_router)
 prometheus_middleware(app)
 
 
@@ -127,6 +130,16 @@ class TrainJobCreate(BaseModel):
     dataset_version: str | None = None
     model_version: str | None = None
     base_model: str | None = None
+    train_mode: str | None = None
+    dataset: str | None = None
+    architecture: str | None = None
+    epochs: int | None = None
+    batch_size: int | None = None
+    learning_rate: float | None = None
+    distributed: bool | None = None
+    shard_count: int | None = None
+    grad_accum_steps: int | None = None
+    use_amp: bool | None = None
 
 
 class ExperimentBody(BaseModel):
@@ -143,12 +156,31 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/models")
+async def list_models(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Ollama tags on GPU — use homelab-* models after publish-lora-to-ollama."""
+    require_api_key(x_api_key)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(f"{GPU_URL}/api/tags")
+            r.raise_for_status()
+            data = r.json()
+        names = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        homelab = [n for n in names if n.startswith("homelab-")]
+        return {"models": names, "homelab_models": homelab, "default_chat_model": homelab[0] if homelab else "llama3.2:latest"}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
 @app.get("/health/gpu")
 async def health_gpu() -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{GPU_URL}/api/tags")
-        r.raise_for_status()
-        return {"gpu": "ok", "models": r.json()}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{GPU_URL}/api/tags")
+            r.raise_for_status()
+            return {"gpu": "ok", "models": r.json()}
+    except Exception as e:
+        return {"gpu": "down", "error": str(e)}
 
 
 @app.get("/system/status")
@@ -238,11 +270,33 @@ def jobs_create_train(
 ) -> JobResponse:
     require_api_key(x_api_key)
     b = body or TrainJobCreate()
+    hyper: dict[str, Any] = {}
+    if b.train_mode:
+        hyper["train_mode"] = b.train_mode
+    if b.dataset:
+        hyper["dataset"] = b.dataset
+    if b.architecture:
+        hyper["architecture"] = b.architecture
+    if b.epochs is not None:
+        hyper["epochs"] = b.epochs
+    if b.batch_size is not None:
+        hyper["batch_size"] = b.batch_size
+    if b.learning_rate is not None:
+        hyper["learning_rate"] = b.learning_rate
+    if b.distributed is not None:
+        hyper["distributed"] = b.distributed
+    if b.shard_count is not None:
+        hyper["shard_count"] = b.shard_count
+    if b.grad_accum_steps is not None:
+        hyper["grad_accum_steps"] = b.grad_accum_steps
+    if b.use_amp is not None:
+        hyper["use_amp"] = b.use_amp
     try:
         job = create_train_job(
             dataset_version=b.dataset_version,
             model_version=b.model_version,
             base_model=b.base_model,
+            hyperparams=hyper or None,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -270,6 +324,18 @@ def worker_heartbeat(
     worker_id = x_worker_id or "unknown-worker"
     record_worker_heartbeat(worker_id, x_worker_host)
     return {"ok": "true", "worker_id": worker_id}
+
+
+@app.get("/internal/worker/train/{job_id}/plan")
+def worker_get_train_plan(
+    job_id: UUID,
+    x_worker_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    require_worker_key(x_worker_key)
+    plan = get_train_plan(job_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="train plan not ready")
+    return plan
 
 
 @app.post("/internal/worker/jobs/claim-imac", response_model=None)

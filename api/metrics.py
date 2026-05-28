@@ -1,4 +1,4 @@
-"""Phase 5 — Prometheus metrics (scrape /metrics; Postgres-backed job gauges)."""
+"""Phase 5 ??? Prometheus metrics (scrape /metrics; Postgres-backed job gauges)."""
 
 from __future__ import annotations
 
@@ -40,6 +40,21 @@ JOB_NOTIFY_QUEUE = Gauge(
     "homelab_job_notify_queue_depth",
     "Redis wake queue length",
     ["queue"],
+)
+VISION_REQUESTS = Counter(
+    "homelab_vision_requests_total",
+    "Reaction vision proxy requests",
+    ["endpoint", "status"],
+)
+VISION_LATENCY = Histogram(
+    "homelab_vision_request_duration_seconds",
+    "Reaction vision proxy latency",
+    ["endpoint"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 30.0),
+)
+VISION_GPU_UP = Gauge(
+    "homelab_vision_gpu_reachable",
+    "1 if GPU reaction service health check passed",
 )
 
 _last_refresh = 0.0
@@ -154,3 +169,4 @@ def prometheus_middleware(app):  # noqa: ANN001
 
     app.add_middleware(_Mw)
     return app
+

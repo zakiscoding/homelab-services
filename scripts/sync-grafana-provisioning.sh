@@ -11,6 +11,7 @@ mkdir -p "$DEST/provisioning/datasources" "$DEST/provisioning/dashboards" "$DEST
 cp -f grafana/provisioning/datasources/prometheus.yml "$DEST/provisioning/datasources/"
 cp -f grafana/provisioning/dashboards/default.yml "$DEST/provisioning/dashboards/"
 cp -f grafana/dashboards/homelab-overview.json "$DEST/dashboards/"
+cp -f grafana/dashboards/homelab-stack.json "$DEST/dashboards/"
 
 echo "Synced to host: $DEST"
 ls -la "$DEST/provisioning/datasources" "$DEST/dashboards"
@@ -28,8 +29,10 @@ if [[ -n "$CID" ]]; then
   docker cp "$DEST/provisioning/datasources/prometheus.yml" "$CID:/var/lib/grafana/provisioning/datasources/prometheus.yml"
   docker cp "$DEST/provisioning/dashboards/default.yml" "$CID:/var/lib/grafana/provisioning/dashboards/default.yml"
   docker cp "$DEST/dashboards/homelab-overview.json" "$CID:/var/lib/grafana/dashboards/homelab-overview.json"
+  docker cp "$DEST/dashboards/homelab-stack.json" "$CID:/var/lib/grafana/dashboards/homelab-stack.json"
   docker restart "$CID"
-  echo "Grafana restarted — dashboards should appear in folder Homelab."
+  echo "Grafana restarted ??? dashboards should appear in folder Homelab."
 else
   echo "Grafana container not running; start stack then re-run this script."
 fi
+

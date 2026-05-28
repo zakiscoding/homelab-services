@@ -20,7 +20,7 @@ WAKE_IMAC = "homelab:jobs:wake:imac"
 MAX_QUEUE_LEN = 1000
 
 TRAIN_TYPES = frozenset({"train"})
-IMAC_TYPES = frozenset({"ingest", "embed"})
+IMAC_TYPES = frozenset({"ingest", "embed", "train_prep"})
 
 _client: redis.Redis | None = None
 

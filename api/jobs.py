@@ -29,9 +29,10 @@ PRIORITY = {
     "rag_query": 20,
     "ingest": 30,
     "embed": 40,
+    "train_prep": 35,
     "train": 50,
 }
-IMAC_JOB_TYPES = ("ingest", "embed")
+IMAC_JOB_TYPES = ("ingest", "embed", "train_prep")
 
 
 def _connect():
@@ -118,7 +119,14 @@ def create_train_job(
         payload["base_model"] = base_model
     if hyperparams:
         payload.update(hyperparams)
-    return create_job("train", payload or None)
+    distributed = bool(payload.get("distributed"))
+    job = create_job("train", payload or None)
+    if distributed:
+        prep_payload = dict(payload)
+        prep_payload["parent_train_id"] = job["id"]
+        prep_payload.setdefault("shard_count", 8)
+        create_job("train_prep", prep_payload)
+    return job
 
 
 def create_infer_job() -> dict[str, Any]:
@@ -218,6 +226,14 @@ def claim_train_job(worker_id: str) -> dict[str, Any] | None:
                           SELECT 1 FROM jobs
                           WHERE type = 'train' AND status = 'running'
                       )
+                      AND (
+                        payload IS NULL
+                        OR NOT COALESCE((payload::jsonb->>'distributed')::boolean, false)
+                        OR EXISTS (
+                          SELECT 1 FROM train_plans tp
+                          WHERE tp.train_job_id = jobs.id AND tp.ready_at IS NOT NULL
+                        )
+                      )
                     ORDER BY priority ASC, created_at ASC
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
@@ -263,7 +279,7 @@ def reset_stale_running_to_pending() -> int:
                 UPDATE jobs
                 SET status = 'pending', locked_by = NULL,
                     started_at = NULL, lease_expires_at = NULL
-                WHERE type IN ('train', 'ingest', 'embed') AND status = 'running'
+                WHERE type IN ('train', 'ingest', 'embed', 'train_prep') AND status = 'running'
                 RETURNING id, type
                 """
             )
@@ -283,11 +299,11 @@ def claim_imac_job(worker_id: str) -> dict[str, Any] | None:
                 cur.execute(
                     """
                     SELECT id, type FROM jobs
-                    WHERE type IN ('ingest', 'embed') AND status = 'pending'
+                    WHERE type IN ('ingest', 'embed', 'train_prep') AND status = 'pending'
                       AND scheduled_at <= NOW()
                       AND NOT EXISTS (
                           SELECT 1 FROM jobs
-                          WHERE type IN ('ingest', 'embed') AND status = 'running'
+                          WHERE type IN ('ingest', 'embed', 'train_prep') AND status = 'running'
                       )
                     ORDER BY priority ASC, created_at ASC
                     LIMIT 1
@@ -524,7 +540,7 @@ def get_system_status(gpu_url: str) -> dict[str, Any]:
         "health": "unknown",
         "qdrant_ready": False,
         "active_collection_version": None,
-        "embedding_model_id": EMBEDDING_MODEL_ID,
+        "embedding_model_id": os.environ.get("EMBEDDING_MODEL_ID", "minilm-l6-v1"),
         "pending_chunks": 0,
     }
     try:

@@ -22,7 +22,7 @@ POLL_INTERVAL = float(os.environ.get("WORKER_POLL_SEC", "10"))
 sys.path.insert(0, "/app")
 from job_wake import WAKE_IMAC, wait_for_wake  # noqa: E402
 from run_embed import run_embed_job  # noqa: E402
-from run_ingest import run_ingest_job  # noqa: E402
+from run_train_prep import run_train_prep  # noqa: E402
 
 
 def _headers() -> dict[str, str]:
@@ -76,7 +76,10 @@ def run_once(client: httpx.Client) -> bool:
     payload = job.get("payload") or {}
     print(f"[imac-worker] claimed {job_type} {job_id}")
     try:
-        if job_type == "ingest":
+        if job_type == "train_prep":
+            result = run_train_prep(payload)
+            print(f"[imac-worker] train_prep for {result.get('parent_train_id')} shards={result.get('shard_count')}")
+        elif job_type == "ingest":
             doc_id = payload.get("document_id")
             if not doc_id:
                 raise ValueError("ingest job missing document_id")
