@@ -1,4 +1,9 @@
-"""Reaction vision — proxy to GPU CNN inference service."""
+"""Reaction vision: proxy to the GPU CNN inference service (homelab-gpu reaction serve).
+
+Routes require ``x-api-key``. Requests are forwarded to GPU_VISION_URL with ``X-Reaction-Key``
+(REACTION_SERVE_KEY) when set, and counted in the ``homelab_vision_*`` Prometheus metrics.
+No jobs rows are created.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ def _require_api_key(x_api_key: str | None) -> None:
 
 
 def _vision_headers() -> dict[str, str]:
+    """Auth header for the GPU reaction service, if REACTION_SERVE_KEY is set."""
     h: dict[str, str] = {}
     if REACTION_SERVE_KEY:
         h["X-Reaction-Key"] = REACTION_SERVE_KEY
@@ -30,11 +36,13 @@ def _vision_headers() -> dict[str, str]:
 
 
 class ReactionRequest(BaseModel):
+    """Body of POST /vision/reaction: a base64 JPEG/PNG frame and an optional confidence threshold."""
     image_b64: str = Field(..., min_length=32)
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class ReactionResponse(BaseModel):
+    """Classifier result from the GPU service; ``label`` is null when no face or confident class."""
     label: str | None = None
     confidence: float = 0.0
     reason: str
@@ -46,7 +54,11 @@ class ReactionResponse(BaseModel):
 
 @router.get("/status")
 async def vision_status(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
-    """GPU reaction model health + metadata."""
+    """GPU reaction model health + metadata.
+
+    Auth: ``x-api-key``. Calls GPU ``/health`` and ``/info``. Always 200: ``{"vision": "ok", ...info}``
+    or ``{"vision": "down", "error": ...}``.
+    """
     _require_api_key(x_api_key)
     started = time.perf_counter()
     try:
@@ -75,7 +87,12 @@ async def vision_reaction(
     body: ReactionRequest,
     x_api_key: str | None = Header(default=None),
 ) -> ReactionResponse:
-    """Classify facial expression from a webcam frame (base64 JPEG/PNG)."""
+    """Classify facial expression from a webcam frame (base64 JPEG/PNG).
+
+    Auth: ``x-api-key``. Forwards the body to GPU ``/infer/reaction`` (30s timeout). 502 when the
+    GPU service returns an error or is unreachable. ``duration_ms`` is filled with the round-trip
+    time if the GPU service omits it.
+    """
     _require_api_key(x_api_key)
     started = time.perf_counter()
     try:

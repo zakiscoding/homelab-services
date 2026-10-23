@@ -1,4 +1,10 @@
-"""RAG HTTP routes — Phase 2."""
+"""RAG HTTP routes (Phase 2): ingest documents, report the active collection, answer queries.
+
+All routes require ``x-api-key`` (skipped when API_KEY is empty). Ingest only queues work for
+the iMac worker; /rag/query runs retrieval (Qdrant) and generation (llm.generate) inline and
+caches answers in Redis under ``rag:{collection_version}:{sha256(query)[:16]}`` for one hour.
+The cache key ignores ``model`` and ``top_k``; embed jobs purge it for their collection.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +43,7 @@ API_KEY = os.environ.get("API_KEY", "")
 
 
 def _redis_client() -> redis.Redis | None:
+    """New Redis client for the answer cache, or None when REDIS_URL is empty."""
     if not REDIS_URL:
         return None
     return redis.from_url(REDIS_URL, decode_responses=True)
@@ -48,12 +55,14 @@ def _require_api_key(x_api_key: str | None) -> None:
 
 
 class IngestRequest(BaseModel):
+    """Body of POST /rag/ingest. ``auto_embed`` also queues an embed job for new documents."""
     text: str = Field(..., min_length=1)
     source_id: str | None = None
     auto_embed: bool = True
 
 
 class IngestResponse(BaseModel):
+    """POST /rag/ingest result. ``duplicate`` is true when identical text was already ingested."""
     document_id: str
     ingest_job_id: str
     embed_job_id: str | None = None
@@ -61,12 +70,14 @@ class IngestResponse(BaseModel):
 
 
 class RagQueryRequest(BaseModel):
+    """Body of POST /rag/query; ``top_k`` (1-20) bounds the Qdrant search."""
     query: str = Field(..., min_length=1)
     model: str = "llama3.2:latest"
     top_k: int = Field(default=5, ge=1, le=20)
 
 
 class RagQueryResponse(BaseModel):
+    """POST /rag/query result; ``answer`` is null with ``reason="no_context"`` when no chunk qualifies."""
     answer: str | None
     reason: str | None = None
     citations: list[dict[str, Any]] = Field(default_factory=list)
@@ -77,6 +88,7 @@ class RagQueryResponse(BaseModel):
 
 
 def _cache_key(collection_version: str, query: str) -> str:
+    """Redis cache key for a query against one collection version."""
     qhash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
     return f"rag:{collection_version}:{qhash}"
 
@@ -86,6 +98,13 @@ def rag_ingest(
     body: IngestRequest,
     x_api_key: str | None = Header(default=None),
 ) -> IngestResponse:
+    """Store a document and queue its ingest (and optionally embed) job.
+
+    Auth: ``x-api-key``. Upserts ``rag_documents`` by content SHA-256 (a repeat keeps the existing
+    row and fills ``source_id`` if it was empty). Always queues an ``ingest`` job; queues an
+    ``embed`` job only when ``auto_embed`` is true and the document was not already ingested.
+    Both wake ``homelab:jobs:wake:imac``. DB errors surface as 500.
+    """
     _require_api_key(x_api_key)
     doc = create_document(body.text, body.source_id)
     duplicate = doc["status"] == "ingested"
@@ -104,6 +123,7 @@ def rag_ingest(
 
 @router.get("/status")
 def rag_status(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Return the ``active`` collection alias. Auth: ``x-api-key``. 503 ``no_active_collection``."""
     _require_api_key(x_api_key)
     alias = get_active_alias()
     if not alias:
@@ -116,6 +136,16 @@ async def rag_query(
     body: RagQueryRequest,
     x_api_key: str | None = Header(default=None),
 ) -> RagQueryResponse:
+    """Answer a question from the active Qdrant collection with citations.
+
+    Auth: ``x-api-key``. Order: Redis cache hit -> return with ``cached=true``. Otherwise create a
+    ``rag_query`` job and mark it running (no lease), embed the query on CPU, search Qdrant,
+    drop hits under RAG_SCORE_THRESHOLD, then prompt the LLM with the numbered chunks. The
+    response (including ``no_context`` answers) is cached for 3600s and the job is marked
+    succeeded.
+    Errors: 503 ``rag_not_ready`` without an active alias; 503 ``qdrant_error`` on search failure;
+    502 on LLM failure. Failures go through mark_job_failed as transient.
+    """
     _require_api_key(x_api_key)
     alias = get_active_alias()
     if not alias:
@@ -202,4 +232,5 @@ async def rag_query(
 
 
 def on_embed_job_succeeded(collection_version: str, redis_client: redis.Redis | None) -> None:
+    """Purge cached answers for ``collection_version`` (currently unused; run_embed purges directly)."""
     purge_rag_cache_keys(redis_client, collection_version)

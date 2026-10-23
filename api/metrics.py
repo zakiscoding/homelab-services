@@ -62,12 +62,19 @@ _REFRESH_SEC = float(os.environ.get("METRICS_REFRESH_SEC", "15"))
 
 
 def _connect():
+    """Open a psycopg connection, or None when DATABASE_URL is unset (metrics then skip DB gauges)."""
     if not DATABASE_URL:
         return None
     return psycopg.connect(DATABASE_URL)
 
 
 def refresh_gauges() -> None:
+    """Refresh job, worker, Redis and wake-queue gauges, at most once per METRICS_REFRESH_SEC.
+
+    Read-only queries against ``jobs`` and ``worker_heartbeats``; Redis errors are ignored. Label
+    sets are only updated when a row exists, so a job type with no pending/running (or recent
+    failed) rows keeps its last gauge value.
+    """
     global _last_refresh
     now = time.time()
     if now - _last_refresh < _REFRESH_SEC:
@@ -139,12 +146,17 @@ def refresh_gauges() -> None:
 
 
 def metrics_body() -> bytes:
+    """Refresh gauges and return the Prometheus text exposition for GET /metrics."""
     refresh_gauges()
     return generate_latest()
 
 
 def prometheus_middleware(app):  # noqa: ANN001
-    """Record request count/latency; skip /metrics and /health."""
+    """Record request count/latency; skip /metrics and /health.
+
+    Also skips the OpenAPI/docs paths. Endpoint labels are the raw path truncated to 64 chars, so
+    paths with ids (e.g. /jobs/{id}) produce one series per id.
+    """
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
     from starlette.responses import Response

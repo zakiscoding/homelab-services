@@ -1,3 +1,30 @@
+"""Homelab API: the iMac FastAPI gateway for chat, RAG, vision and the GPU/iMac job queue.
+
+Route groups:
+  /health, /health/gpu, /metrics    no auth (liveness, LLM backend probe, Prometheus scrape)
+  /models, /chat, /stats,           user routes, ``x-api-key`` header
+  /system/status, /jobs, /jobs/{id}
+  /rag/*                            rag_routes.router, ``x-api-key``
+  /vision/*                         vision_routes.router, ``x-api-key``
+  /internal/worker/*                worker routes, ``X-Worker-Key`` header
+
+Auth model: user routes compare ``x-api-key`` with API_KEY; when API_KEY is empty the check
+is skipped (open dev mode). Worker routes compare ``X-Worker-Key`` with WORKER_API_KEY and
+fail closed (503) when it is unset. Workers identify themselves with ``X-Worker-Id`` /
+``X-Worker-Host``, which only feed heartbeats and ``locked_by``.
+
+Postgres (jobs.py) is the job source of truth. Redis holds the /chat request counter
+(``homelab:requests:total``), the RAG answer cache and the worker wake queues
+(job_notify.py); it never holds job state. Prometheus request metrics come from
+metrics.prometheus_middleware.
+
+Env vars read here: DATABASE_URL, REDIS_URL (default redis://redis:6379/0), API_KEY,
+WORKER_API_KEY. Imported modules also read LLM_BACKEND, GPU_URL, LLM_URL, LLM_API_KEY,
+LLM_DEFAULT_MODEL, LLM_MAX_TOKENS (llm.py); QDRANT_URL, EMBEDDING_MODEL_ID,
+RAG_SCORE_THRESHOLD (rag_engine.py); GPU_VISION_URL, REACTION_SERVE_KEY (vision_routes.py);
+JOB_NOTIFY_ENABLED (job_notify.py); METRICS_REFRESH_SEC (metrics.py).
+"""
+
 import os
 import time
 from contextlib import asynccontextmanager
@@ -41,6 +68,7 @@ _redis: redis.Redis | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Open the shared Redis client (if REDIS_URL is set) for the app's lifetime."""
     global _redis
     if REDIS_URL:
         _redis = redis.from_url(REDIS_URL, decode_responses=True)
@@ -57,16 +85,22 @@ prometheus_middleware(app)
 
 @app.get("/metrics")
 def prometheus_metrics() -> Response:
-    """Prometheus scrape target (internal / LAN — no API key)."""
+    """Prometheus scrape target (internal / LAN, no API key).
+
+    Refreshes the Postgres/Redis-backed gauges at most every METRICS_REFRESH_SEC, then returns
+    the text exposition format.
+    """
     return Response(content=metrics_body(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 def require_api_key(x_api_key: str | None) -> None:
+    """Raise 401 unless ``x-api-key`` matches API_KEY; a no-op when API_KEY is empty."""
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 def require_worker_key(x_worker_key: str | None) -> None:
+    """Guard for /internal/worker/*: 503 if WORKER_API_KEY is unset, 401 if ``X-Worker-Key`` differs."""
     if not WORKER_API_KEY:
         raise HTTPException(status_code=503, detail="WORKER_API_KEY not configured")
     if x_worker_key != WORKER_API_KEY:
@@ -74,6 +108,10 @@ def require_worker_key(x_worker_key: str | None) -> None:
 
 
 def log_chat(prompt: str, response: str, model: str, duration_ms: int, job_id: str | None = None) -> None:
+    """Best-effort INSERT of a chat exchange into ``chat_logs``.
+
+    Skipped when DATABASE_URL is unset; any DB error is swallowed so logging never fails a request.
+    """
     if not DATABASE_URL:
         return
     try:
@@ -92,11 +130,13 @@ def log_chat(prompt: str, response: str, model: str, duration_ms: int, job_id: s
 
 
 class ChatRequest(BaseModel):
+    """Body of POST /chat. ``model`` may be remapped by the openai backend (see llm.generate)."""
     prompt: str = Field(..., min_length=1)
     model: str = "llama3.2:latest"
 
 
 class ChatResponse(BaseModel):
+    """POST /chat result; ``model`` is the model that answered, ``job_id`` the infer job (if any)."""
     model: str
     response: str
     duration_ms: int
@@ -104,6 +144,7 @@ class ChatResponse(BaseModel):
 
 
 class JobResponse(BaseModel):
+    """Public view of a ``jobs`` row; ISO 8601 timestamps, no payload (worker claim routes add it)."""
     id: str
     type: str
     status: str
@@ -121,12 +162,24 @@ class JobResponse(BaseModel):
 
 
 class JobFailBody(BaseModel):
+    """Body of POST /internal/worker/jobs/{id}/failed.
+
+    ``error_class`` is free text; only ``"transient"`` is eligible for retry. ``retry`` defaults to
+    ``error_class == "transient"``; ``retry=true`` with a non-transient class still fails the job.
+    """
     error_message: str = Field(..., min_length=1)
     error_class: str = "transient"
     retry: bool | None = None
 
 
 class TrainJobCreate(BaseModel):
+    """Body of POST /jobs (all fields optional).
+
+    ``dataset_version``, ``model_version`` and ``base_model`` go into the payload as-is; the other
+    fields are copied into the payload only when set. ``distributed=true`` also queues a train_prep
+    job and holds the train job until its shard plan is ready. ``route`` marks the job for the
+    gpu-systems-lab router worker.
+    """
     dataset_version: str | None = None
     model_version: str | None = None
     base_model: str | None = None
@@ -147,6 +200,7 @@ class TrainJobCreate(BaseModel):
 
 
 class ExperimentBody(BaseModel):
+    """Body of POST /internal/worker/jobs/{id}/experiment; ``run_id`` defaults to ``exp-YYYYMMDD-xxxxxx``."""
     run_id: str | None = None
     dataset_version: str | None = None
     model_version: str | None = None
@@ -157,6 +211,7 @@ class ExperimentBody(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    """Liveness probe (no auth, no dependencies checked)."""
     return {"status": "ok"}
 
 
@@ -165,6 +220,7 @@ async def list_models(x_api_key: str | None = Header(default=None)) -> dict[str,
     """Models on the LLM backend (Ollama tags, or vLLM served models).
 
     With Ollama, homelab-* models (publish-lora-to-ollama) are preferred as the default.
+    Auth: ``x-api-key``. Makes an HTTP call to the active backend; any failure -> 502.
     """
     require_api_key(x_api_key)
     try:
@@ -183,6 +239,11 @@ async def list_models(x_api_key: str | None = Header(default=None)) -> dict[str,
 
 @app.get("/health/gpu")
 async def health_gpu() -> dict[str, Any]:
+    """Probe the active LLM backend (no auth).
+
+    Always 200: ``{"gpu": "ok", "models": [...]}`` when the backend lists models, else
+    ``{"gpu": "down", "error": ...}``. Also reports ``backend`` and ``mode`` (LLM_BACKEND).
+    """
     try:
         return {"gpu": "ok", "backend": llm.active_backend(), "mode": llm.MODE, "models": await llm.list_models()}
     except Exception as e:
@@ -191,6 +252,11 @@ async def health_gpu() -> dict[str, Any]:
 
 @app.get("/system/status")
 def system_status(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Aggregate control-plane status for the web UI (jobs.get_system_status).
+
+    Auth: ``x-api-key``. Read-only: job counts, recent failures, worker heartbeats, flags, Redis
+    wake-queue depth, LLM backend ping and Qdrant readiness. Any exception -> 500.
+    """
     require_api_key(x_api_key)
     try:
         return get_system_status(llm.backend_url())
@@ -203,6 +269,19 @@ async def chat(
     body: ChatRequest,
     x_api_key: str | None = Header(default=None),
 ) -> ChatResponse:
+    """Single-turn chat completion on the active LLM backend, tracked as an ``infer`` job.
+
+    Auth: ``x-api-key``.
+    Side effects: creates an ``infer`` jobs row and moves it straight to ``running`` (no lease, no
+    worker; the API itself is the executor), calls llm.generate (Ollama or vLLM over Tailscale),
+    logs the exchange to ``chat_logs``, marks the job ``succeeded`` and INCRs
+    ``homelab:requests:total`` in Redis.
+    Errors: 503 ``gpu_busy`` when a train job is running and ``allow_infer_during_train`` is not
+    "true"; 502 on any LLM failure (the infer job goes through mark_job_failed as transient, which
+    puts it back to ``pending`` with backoff while attempts remain; nothing ever claims infer
+    jobs, so the row is bookkeeping only). If job creation fails for a non-RuntimeError reason the
+    chat still runs without a job; other RuntimeErrors (e.g. DATABASE_URL unset) surface as 500.
+    """
     require_api_key(x_api_key)
     infer_job = None
     try:
@@ -255,6 +334,7 @@ async def chat(
 
 @app.get("/stats")
 def stats(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Return ``{"requests_total": N}`` from the Redis counter (0 without Redis). Auth: ``x-api-key``."""
     require_api_key(x_api_key)
     total = int(_redis.get("homelab:requests:total") or 0) if _redis else 0
     return {"requests_total": total}
@@ -265,6 +345,14 @@ def jobs_create_train(
     body: TrainJobCreate | None = None,
     x_api_key: str | None = Header(default=None),
 ) -> JobResponse:
+    """Queue a ``train`` job (POST /jobs).
+
+    Auth: ``x-api-key``. Builds the payload from TrainJobCreate and calls jobs.create_train_job,
+    which INSERTs a pending train row (priority 50), LPUSHes a wake to
+    ``homelab:jobs:wake:train`` and, for ``distributed=true``, also queues a ``train_prep`` job.
+    Errors: 422 if ``route`` is given without a non-empty ``route.command``; 503 when
+    ``training_paused`` is "true" (or DATABASE_URL is unset); 500 on other DB errors.
+    """
     require_api_key(x_api_key)
     b = body or TrainJobCreate()
     hyper: dict[str, Any] = {}
@@ -308,6 +396,7 @@ def jobs_create_train(
 
 @app.get("/jobs/{job_id}", response_model=JobResponse)
 def jobs_get(job_id: UUID, x_api_key: str | None = Header(default=None)) -> JobResponse:
+    """Fetch one job by id. Auth: ``x-api-key``. 404 if it does not exist; 422 for a malformed UUID."""
     require_api_key(x_api_key)
     job = get_job(job_id)
     if not job:
@@ -321,6 +410,11 @@ def worker_heartbeat(
     x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
     x_worker_host: str | None = Header(default=None, alias="X-Worker-Host"),
 ) -> dict[str, Any]:
+    """Upsert ``worker_heartbeats`` for ``X-Worker-Id`` (default "unknown-worker").
+
+    Auth: ``X-Worker-Key``. ``X-Worker-Host`` is stored as host (defaults to the worker id).
+    Heartbeats feed /system/status and the Prometheus worker-age gauge; they do not extend leases.
+    """
     require_worker_key(x_worker_key)
     worker_id = x_worker_id or "unknown-worker"
     record_worker_heartbeat(worker_id, x_worker_host)
@@ -332,6 +426,10 @@ def worker_get_train_plan(
     job_id: UUID,
     x_worker_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    """Return the shard plan for a distributed train job (train_plan.get_train_plan).
+
+    Auth: ``X-Worker-Key``. 404 ``train plan not ready`` until the train_prep job has written it.
+    """
     require_worker_key(x_worker_key)
     plan = get_train_plan(job_id)
     if not plan:
@@ -344,6 +442,12 @@ def worker_claim_imac(
     x_worker_key: str | None = Header(default=None),
     x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
 ):
+    """Claim the next iMac job (ingest, embed or train_prep) for ``X-Worker-Id``.
+
+    Auth: ``X-Worker-Key``. Records a heartbeat, expires stale iMac leases, then claims at most one
+    job (only if no iMac job is running) with a 5-minute lease. Returns JobResponse fields plus
+    ``payload``, or 204 when nothing is claimable; 500 on DB errors.
+    """
     require_worker_key(x_worker_key)
     worker_id = x_worker_id or "imac-worker"
     record_worker_heartbeat(worker_id)
@@ -364,7 +468,13 @@ def worker_claim_train(
     x_worker_key: str | None = Header(default=None),
     x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
 ):
-    """routed=true: only jobs with a route spec (router worker); default: only jobs without."""
+    """Claim the next pending ``train`` job for ``X-Worker-Id``.
+
+    routed=true: only jobs with a route spec (router worker); default: only jobs without.
+    Auth: ``X-Worker-Key``. Records a heartbeat, expires stale train leases, then claims one job
+    with a 15-minute lease, only when no train job is running (see jobs.claim_train_job).
+    Returns JobResponse fields plus ``payload``, 204 when nothing is claimable, 500 on DB errors.
+    """
     require_worker_key(x_worker_key)
     worker_id = x_worker_id or "unknown-worker"
     record_worker_heartbeat(worker_id)
@@ -385,6 +495,11 @@ def worker_record_experiment(
     body: ExperimentBody,
     x_worker_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    """Record an ``experiments`` row for a train job.
+
+    Auth: ``X-Worker-Key``. 409 unless the job exists and is ``running`` or ``succeeded``; 500 on
+    DB errors (``run_id`` is UNIQUE, so a reused run_id fails here). Returns the inserted row.
+    """
     require_worker_key(x_worker_key)
     job = get_job(job_id)
     if not job or job["status"] not in ("running", "succeeded"):
@@ -408,6 +523,11 @@ def worker_job_succeeded(
     job_id: UUID,
     x_worker_key: str | None = Header(default=None),
 ) -> JobResponse:
+    """Transition a ``running`` job to ``succeeded`` and clear its lease.
+
+    Auth: ``X-Worker-Key``. 409 if the job is missing or not running (e.g. its lease already
+    expired and it was requeued). Ownership (``locked_by``) is not checked.
+    """
     require_worker_key(x_worker_key)
     job = mark_job_succeeded(job_id)
     if not job:
@@ -421,6 +541,12 @@ def worker_job_failed(
     body: JobFailBody,
     x_worker_key: str | None = Header(default=None),
 ) -> JobResponse:
+    """Report a job failure; the job is retried or failed (jobs.mark_job_failed).
+
+    Auth: ``X-Worker-Key``. A ``transient`` failure with attempts left goes back to ``pending``
+    with backoff (30s/120s/600s) and a wake notification; otherwise the job becomes ``failed``.
+    409 if the job is missing or not ``running``/``pending``.
+    """
     require_worker_key(x_worker_key)
     job = mark_job_failed(
         job_id,
@@ -435,6 +561,14 @@ def worker_job_failed(
 
 @app.post("/internal/worker/jobs/reset-stale")
 def worker_reset_stale(x_worker_key: str | None = Header(default=None)) -> dict[str, int]:
+    """Requeue jobs whose lease expired, then force-reset every remaining running job.
+
+    Auth: ``X-Worker-Key``. Called by the iMac worker on startup. ``lease_expired_requeued`` counts
+    expired-lease jobs that were requeued or failed (expire_stale_leases); ``forced_reset`` counts
+    running train/ingest/embed/train_prep jobs put back to ``pending`` regardless of lease
+    (reset_stale_running_to_pending), which includes a train job a GPU worker may still be
+    executing. 500 on DB errors.
+    """
     require_worker_key(x_worker_key)
     try:
         expired = expire_stale_leases()

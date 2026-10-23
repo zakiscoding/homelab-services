@@ -1,4 +1,10 @@
-"""Distributed train plan — iMac shards indices, GPU executes (Postgres SSOT)."""
+"""Distributed train plan: the iMac shards dataset indices, the GPU executes (Postgres SSOT).
+
+A ``train`` job with ``distributed=true`` gets a companion ``train_prep`` job. The iMac worker
+runs run_train_prep_job, which writes ``train_plans``, ``train_shards`` and
+``train_val_indices`` and sets ``ready_at``; only then does jobs.claim_train_job hand the train
+job to a GPU worker, which fetches the plan via GET /internal/worker/train/{id}/plan.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +24,17 @@ DATASET_TRAIN_SIZES: dict[str, int] = {
 
 
 def _connect():
+    """Open a new psycopg connection; RuntimeError if DATABASE_URL is unset."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set")
     return psycopg.connect(DATABASE_URL)
 
 
 def resolve_train_sample_count(dataset: str, dataset_version: str | None, payload: dict) -> int:
+    """Training-set size: ``payload.total_samples`` if set, else the known size for cifar10/fer2013.
+
+    Raises ValueError for any other dataset without ``total_samples``.
+    """
     if payload.get("total_samples"):
         return int(payload["total_samples"])
     key = (dataset or "cifar10").lower()
@@ -41,6 +52,11 @@ def build_shard_plan(
     val_ratio: float = 0.1,
     seed: int = 42,
 ) -> tuple[list[list[int]], list[int]]:
+    """Shuffle the sample indices with ``seed``, hold out ``val_ratio``, deal the rest round-robin.
+
+    Returns ``(shards, val_indices)``. Empty shards are dropped, so fewer than ``shard_count`` may
+    be returned.
+    """
     shard_count = max(1, min(shard_count, total_samples))
     indices = list(range(total_samples))
     rng = random.Random(seed)
@@ -69,6 +85,13 @@ def save_train_plan(
     seed: int,
     meta: dict[str, Any] | None = None,
 ) -> None:
+    """Persist a shard plan for ``train_job_id`` and mark it ready, then wake the train queue.
+
+    Upserts ``train_plans`` (``ready_at = NOW()``), replaces ``train_shards`` and upserts
+    ``train_val_indices`` in one connection. The wake LPUSH to ``homelab:jobs:wake:train`` is
+    best-effort; the worker image does not ship job_notify, so when the iMac worker calls this the
+    import fails silently and the GPU worker finds the job on its next poll.
+    """
     total = sum(len(s) for s in shards) + len(val_indices)
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -123,6 +146,7 @@ def save_train_plan(
 
 
 def get_train_plan(train_job_id: UUID) -> dict[str, Any] | None:
+    """Return the full plan (metadata, shard index lists, val indices), or None if not ready."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -178,6 +202,12 @@ def get_train_plan(train_job_id: UUID) -> dict[str, Any] | None:
 
 
 def run_train_prep_job(payload: dict[str, Any]) -> dict[str, Any]:
+    """Execute a ``train_prep`` payload: build and save the shard plan for its parent train job.
+
+    Reads ``parent_train_id`` (required, ValueError otherwise), ``dataset`` (or ``cnn_dataset``,
+    default cifar10), ``shard_count`` (8), ``seed`` (42), ``val_ratio`` (0.1) and
+    ``total_samples``. Returns a summary dict.
+    """
     parent = payload.get("parent_train_id")
     if not parent:
         raise ValueError("train_prep missing parent_train_id")

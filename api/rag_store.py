@@ -17,16 +17,19 @@ DEFAULT_COLLECTION_VERSION = "v1_minilm_l6"
 
 
 def _connect():
+    """Open a new psycopg connection; RuntimeError if DATABASE_URL is unset."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set")
     return psycopg.connect(DATABASE_URL)
 
 
 def sha256_text(text: str) -> str:
+    """Hex SHA-256 of UTF-8 text; used to deduplicate documents."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def chunk_text(text: str, *, size: int = 400, overlap: int = 50) -> list[str]:
+    """Split stripped text into ``size``-char windows overlapping by ``overlap`` chars."""
     text = text.strip()
     if not text:
         return []
@@ -42,6 +45,10 @@ def chunk_text(text: str, *, size: int = 400, overlap: int = 50) -> list[str]:
 
 
 def get_active_alias() -> dict[str, Any] | None:
+    """Return the ``collection_aliases`` row named ``active``, or None.
+
+    It names the collection version, Qdrant collection and embedding model that queries use.
+    """
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -63,6 +70,11 @@ def get_active_alias() -> dict[str, Any] | None:
 
 
 def create_document(text: str, source_id: str | None) -> dict[str, Any]:
+    """Upsert a ``rag_documents`` row keyed by content SHA-256 and return it.
+
+    A new document starts ``pending``. For an existing one the status is unchanged (callers treat
+    ``ingested`` as a duplicate) and ``source_id`` is only filled when previously null.
+    """
     digest = sha256_text(text)
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -88,6 +100,7 @@ def create_document(text: str, source_id: str | None) -> dict[str, Any]:
 
 
 def get_document(document_id: UUID) -> dict[str, Any] | None:
+    """Return a document with its raw text, or None."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -106,6 +119,12 @@ def get_document(document_id: UUID) -> dict[str, Any] | None:
 
 
 def run_ingest_for_document(document_id: UUID, collection_version: str) -> int:
+    """Re-chunk one document into ``rag_chunks`` for ``collection_version``.
+
+    In one transaction: delete the document's existing chunks, insert the new ones (unembedded)
+    and set the document to ``ingested``. Returns the chunk count; ValueError if the document is
+    missing.
+    """
     doc = get_document(document_id)
     if not doc:
         raise ValueError("document not found")
@@ -134,6 +153,7 @@ def run_ingest_for_document(document_id: UUID, collection_version: str) -> int:
 
 
 def pending_chunks(collection_version: str, *, limit: int = 64) -> list[dict[str, Any]]:
+    """Up to ``limit`` not-yet-embedded chunks of ``collection_version``, in document order."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -154,6 +174,7 @@ def pending_chunks(collection_version: str, *, limit: int = 64) -> list[dict[str
 
 
 def mark_chunks_embedded(chunk_ids: list[UUID]) -> None:
+    """Stamp ``embedded_at = NOW()`` on the given chunk ids."""
     if not chunk_ids:
         return
     with _connect() as conn:
@@ -166,6 +187,7 @@ def mark_chunks_embedded(chunk_ids: list[UUID]) -> None:
 
 
 def count_pending_chunks(collection_version: str) -> int:
+    """Number of chunks in ``collection_version`` still waiting to be embedded."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -179,6 +201,7 @@ def count_pending_chunks(collection_version: str) -> int:
 
 
 def purge_rag_cache_keys(redis_client, collection_version: str) -> int:
+    """Delete cached answers ``rag:{collection_version}:*`` via SCAN; returns the count (0 without Redis)."""
     if not redis_client:
         return 0
     pattern = f"rag:{collection_version}:*"

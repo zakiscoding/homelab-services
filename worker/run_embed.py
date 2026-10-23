@@ -15,6 +15,14 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 
 
 def run_embed_job(collection_version: str | None = None) -> int:
+    """Embed up to 128 pending chunks and upsert them into the active Qdrant collection.
+
+    Pending chunks are read for ``collection_version`` (default: the active alias's version) but
+    always written to the active alias's Qdrant collection. Chunks are then marked embedded and
+    the Redis answer cache for that version is purged. Returns the number of chunks embedded (0
+    when none are pending); RuntimeError without an active alias. One call handles one batch;
+    remaining chunks wait for the next embed job.
+    """
     alias = get_active_alias()
     if not alias:
         raise RuntimeError("no active collection alias")

@@ -17,6 +17,7 @@ SCORE_THRESHOLD = float(os.environ.get("RAG_SCORE_THRESHOLD", "0.35"))
 
 @lru_cache(maxsize=1)
 def _embedder():
+    """Lazily load the fastembed all-MiniLM-L6-v2 model (384-dim, CPU) once per process."""
     from fastembed import TextEmbedding
 
     return TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -24,10 +25,12 @@ def _embedder():
 
 @lru_cache(maxsize=1)
 def qdrant_client() -> QdrantClient:
+    """Process-wide Qdrant client for QDRANT_URL."""
     return QdrantClient(url=QDRANT_URL, timeout=30)
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Embed texts with the CPU MiniLM model; returns one 384-float vector per text."""
     if not texts:
         return []
     model = _embedder()
@@ -35,6 +38,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def ensure_collection(collection_name: str) -> None:
+    """Create ``collection_name`` in Qdrant (384-dim, cosine) if it does not exist."""
     client = qdrant_client()
     names = {c.name for c in client.get_collections().collections}
     if collection_name in names:
@@ -51,6 +55,7 @@ def upsert_chunks(
     vectors: list[list[float]],
     payloads: list[dict[str, Any]],
 ) -> None:
+    """Upsert chunk vectors into Qdrant (point id = chunk id), creating the collection if needed."""
     ensure_collection(collection_name)
     points = [
         qm.PointStruct(id=cid, vector=vec, payload=pl)
@@ -65,6 +70,11 @@ def search_collection(
     *,
     top_k: int = 5,
 ) -> list[dict[str, Any]]:
+    """Embed ``query`` and return the ``top_k`` nearest chunks.
+
+    Each hit is a dict with chunk_id, text, document_id and cosine score. A missing
+    collection is created first, so it returns no hits instead of erroring.
+    """
     ensure_collection(collection_name)
     qvec = embed_texts([query])[0]
     hits = qdrant_client().search(
@@ -89,4 +99,5 @@ def search_collection(
 
 
 def filter_by_threshold(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep hits whose cosine score is at least RAG_SCORE_THRESHOLD (default 0.35)."""
     return [h for h in hits if h.get("score", 0) >= SCORE_THRESHOLD]

@@ -1,4 +1,29 @@
-"""Postgres job control plane — Phase 0A/0B."""
+"""Postgres job control plane (Phase 0A/0B): create, claim, lease, retry and report jobs.
+
+The ``jobs`` table is the single source of truth. Lifecycle::
+
+    pending --claim (FOR UPDATE SKIP LOCKED, lease)--> running --> succeeded
+       ^                                                 |
+       +--- transient failure / lease expiry, attempts left (attempt+1, backoff) --+
+                                                         +--> failed (no attempts left / permanent)
+
+Job types and who runs them:
+  train                     GPU workers via /internal/worker/jobs/claim (15-min lease); at most
+                            one running at a time. Jobs with ``payload.route`` go only to the
+                            router worker (``claim?routed=true``).
+  ingest, embed, train_prep the iMac worker via /internal/worker/jobs/claim-imac (5-min lease);
+                            at most one of these running at a time.
+  infer, rag_query          executed inline by the API (/chat, /rag/query); never claimed and
+                            never leased.
+
+Lower ``priority`` claims first (PRIORITY), then oldest ``created_at``. ``scheduled_at`` delays
+retries: BACKOFF_SECONDS is indexed by the current attempt (30s, 120s, then 600s). With the
+schema default ``max_attempts = 3`` a job runs at most three times. There is no lease-renewal
+call, so a job that runs longer than its lease is requeued by the next expiry sweep.
+
+Redis is used only for wake notifications (job_notify); a lost notification just means the
+worker finds the job on its next poll.
+"""
 
 from __future__ import annotations
 
@@ -36,12 +61,14 @@ IMAC_JOB_TYPES = ("ingest", "embed", "train_prep")
 
 
 def _connect():
+    """Open a new psycopg connection; RuntimeError if DATABASE_URL is unset."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set")
     return psycopg.connect(DATABASE_URL)
 
 
 def _row_to_job(row: tuple) -> dict[str, Any]:
+    """Map a JOB_COLUMNS row to the API dict (UUID -> str, timestamps -> ISO 8601)."""
     return {
         "id": str(row[0]),
         "type": row[1],
@@ -61,6 +88,7 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
 
 
 def _get_setting(key: str, default: str = "false") -> str:
+    """Read a ``system_settings`` flag as text, falling back to ``default`` when the key is missing."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
@@ -69,6 +97,11 @@ def _get_setting(key: str, default: str = "false") -> str:
 
 
 def create_job(job_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """INSERT a ``pending`` job of ``job_type`` with its PRIORITY and JSON payload, then send a wake.
+
+    Returns the job dict with ``payload`` attached. The wake LPUSH goes to the train or iMac queue
+    for those types and is skipped for infer/rag_query.
+    """
     priority = PRIORITY.get(job_type, 50)
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -89,15 +122,18 @@ def create_job(job_type: str, payload: dict[str, Any] | None = None) -> dict[str
 
 
 def create_ingest_job(document_id: str) -> dict[str, Any]:
+    """Queue an ``ingest`` job that chunks ``document_id`` into rag_chunks (iMac worker)."""
     return create_job("ingest", {"document_id": document_id})
 
 
 def create_embed_job(collection_version: str | None = None) -> dict[str, Any]:
+    """Queue an ``embed`` job for ``collection_version`` (default ``v1_minilm_l6``)."""
     ver = collection_version or "v1_minilm_l6"
     return create_job("embed", {"collection_version": ver})
 
 
 def create_rag_query_job() -> dict[str, Any]:
+    """Create a ``rag_query`` bookkeeping job; /rag/query runs it inline."""
     return create_job("rag_query")
 
 
@@ -108,6 +144,13 @@ def create_train_job(
     base_model: str | None = None,
     hyperparams: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Create a ``train`` job; for ``distributed`` payloads also queue its ``train_prep`` job.
+
+    ``hyperparams`` (including ``route`` for router jobs) is merged into the payload alongside the
+    version fields. The train_prep payload is a copy plus ``parent_train_id`` and a default
+    ``shard_count`` of 8; the train job is not claimable until that prep writes a ready train plan.
+    Raises RuntimeError("training_paused is true") when the ``training_paused`` setting is "true".
+    """
     if _get_setting("training_paused") == "true":
         raise RuntimeError("training_paused is true")
     payload: dict[str, Any] = {}
@@ -130,6 +173,11 @@ def create_train_job(
 
 
 def create_infer_job() -> dict[str, Any]:
+    """Create an ``infer`` bookkeeping job for /chat, refusing while training holds the GPU.
+
+    Raises RuntimeError("gpu_busy: train job running") if any train job is running and
+    ``allow_infer_during_train`` is not "true". The check and the insert are not atomic.
+    """
     if _get_setting("allow_infer_during_train") != "true":
         with _connect() as conn:
             with conn.cursor() as cur:
@@ -142,6 +190,7 @@ def create_infer_job() -> dict[str, Any]:
 
 
 def get_job(job_id: UUID) -> dict[str, Any] | None:
+    """Return the job dict for ``job_id`` (without payload), or None."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -153,6 +202,14 @@ def get_job(job_id: UUID) -> dict[str, Any] | None:
 
 
 def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> int:
+    """Sweep running jobs of ``job_types`` whose ``lease_expires_at`` has passed.
+
+    Rows are locked FOR UPDATE inside one transaction. Each expired job either goes back to
+    ``pending`` (attempt+1, ``scheduled_at`` pushed out by backoff, error ``lease_expired``) or,
+    on its last attempt, becomes ``failed`` (``lease_expired_max_attempts``). Requeued jobs get a
+    wake notification after commit. ``lease_minutes`` is unused; expiry relies on the stored
+    ``lease_expires_at``. Returns the number of jobs requeued or failed.
+    """
     n = 0
     with _connect() as conn:
         with conn.transaction():
@@ -206,7 +263,10 @@ def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> 
 
 
 def expire_stale_leases() -> int:
-    """Requeue expired running jobs (train + iMac types) or mark failed."""
+    """Requeue expired running jobs (train + iMac types) or mark failed.
+
+    Returns the combined count from both sweeps.
+    """
     n = _expire_leases_for_types(("train",), LEASE_MINUTES_TRAIN)
     n += _expire_leases_for_types(IMAC_JOB_TYPES, LEASE_MINUTES_IMAC)
     return n
@@ -217,8 +277,19 @@ def claim_train_job(worker_id: str, routed: bool = False) -> dict[str, Any] | No
 
     routed=False (the Windows QLoRA worker): only jobs without a payload["route"] spec.
     routed=True (gpu-systems-lab router worker): only jobs with one; it decides local RTX vs Modal.
+
+    First sweeps expired train leases. A job is claimable when it is ``pending``, its
+    ``scheduled_at`` has passed, no train job of either kind is ``running`` (one GPU training slot)
+    and, for distributed jobs, its train_plans row is ready. The candidate row is picked with
+    ``FOR UPDATE SKIP LOCKED`` so concurrent claimers never take the same row, then set to
+    ``running`` with ``locked_by = worker_id`` and a LEASE_MINUTES_TRAIN lease. ``started_at``
+    keeps its first value across retries. The single-slot check is a NOT EXISTS read, not a lock,
+    so two claimers racing at the same instant could in principle both start a job.
+
+    Returns the job dict with ``payload``, or None when nothing is claimable.
     """
     _expire_leases_for_types(("train",), LEASE_MINUTES_TRAIN)
+    # `?` is the jsonb key-exists operator (psycopg placeholders are %s, so it is passed through).
     route_filter = (
         "payload IS NOT NULL AND payload::jsonb ? 'route'"
         if routed
@@ -282,7 +353,11 @@ def claim_train_job(worker_id: str, routed: bool = False) -> dict[str, Any] | No
 
 
 def reset_stale_running_to_pending() -> int:
-    """Force-reset all running train + iMac jobs (operator / worker startup)."""
+    """Force-reset all running train + iMac jobs (operator / worker startup).
+
+    Clears lock, start time and lease without checking lease expiry and without bumping
+    ``attempt``, then sends wake notifications. Returns the number of jobs reset.
+    """
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -302,7 +377,12 @@ def reset_stale_running_to_pending() -> int:
 
 
 def claim_imac_job(worker_id: str) -> dict[str, Any] | None:
-    """Claim one ingest or embed job (max 1 iMac job running at a time)."""
+    """Claim one ingest, embed or train_prep job (max 1 iMac job running at a time).
+
+    Sweeps expired iMac leases first, then uses the same pattern as claim_train_job: oldest
+    highest-priority eligible row via ``FOR UPDATE SKIP LOCKED``, set to ``running`` with
+    ``locked_by`` and a LEASE_MINUTES_IMAC lease. Returns the job dict with ``payload``, or None.
+    """
     _expire_leases_for_types(IMAC_JOB_TYPES, LEASE_MINUTES_IMAC)
     with _connect() as conn:
         with conn.transaction():
@@ -351,6 +431,7 @@ def claim_imac_job(worker_id: str) -> dict[str, Any] | None:
 
 
 def mark_job_running(job_id: UUID) -> None:
+    """Move a ``pending`` job to ``running`` without a lease (used for inline rag_query jobs)."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -364,6 +445,10 @@ def mark_job_running(job_id: UUID) -> None:
 
 
 def mark_job_succeeded(job_id: UUID) -> dict[str, Any] | None:
+    """Set a ``running`` job to ``succeeded``, stamp ``finished_at`` and clear lease and error.
+
+    Returns the updated job, or None if the job is missing or not running.
+    """
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -391,6 +476,15 @@ def mark_job_failed(
     error_class: str = "transient",
     retry: bool | None = None,
 ) -> dict[str, Any] | None:
+    """Record a failure, retrying transient errors while attempts remain.
+
+    ``retry`` defaults to ``error_class == "transient"``. A retry needs ``retry``, a transient
+    class and ``attempt + 1 < max_attempts``: the job returns to ``pending`` with attempt+1,
+    cleared lock/lease, ``scheduled_at`` = now + backoff, and a wake notification. Otherwise it
+    becomes ``failed`` with ``finished_at``. ``error_message`` is truncated to 2000 chars. The row
+    is read and updated in one transaction. Returns the updated job, or None if the job is missing
+    or already finished.
+    """
     if retry is None:
         retry = error_class == "transient"
 
@@ -450,6 +544,7 @@ def mark_job_failed(
 
 
 def record_worker_heartbeat(worker_id: str, host: str | None = None) -> None:
+    """Upsert ``worker_heartbeats`` (host defaults to worker_id) with ``last_seen_at = NOW()``."""
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -465,7 +560,13 @@ def record_worker_heartbeat(worker_id: str, host: str | None = None) -> None:
 
 
 def get_system_status(gpu_url: str) -> dict[str, Any]:
-    """Aggregate situational awareness for GET /system/status."""
+    """Aggregate situational awareness for GET /system/status.
+
+    Read-only. Collects job counts by type/status, up to 10 failures from the last 24h, worker
+    heartbeats, the two system_settings flags and wake-queue depths, then pings the active LLM
+    backend (sync HTTP) and Qdrant ``/readyz`` and reads the active RAG alias. LLM/Qdrant problems
+    are reported as fields (``gpu.reachable``, ``rag.health``), not raised; DB errors propagate.
+    """
     now = datetime.now(timezone.utc).isoformat()
     status: dict[str, Any] = {
         "timestamp": now,
@@ -588,6 +689,11 @@ def create_experiment_for_job(
     hyperparams: dict | None = None,
     output_path: str | None = None,
 ) -> dict[str, Any]:
+    """INSERT an ``experiments`` row linked to ``job_id`` and return it.
+
+    ``run_id`` defaults to ``exp-YYYYMMDD-<6 hex>``; ``hyperparams`` is stored as JSON (``{}`` when
+    None). Raises on a duplicate ``run_id``.
+    """
     rid = run_id or f"exp-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid4().hex[:6]}"
     with _connect() as conn:
         with conn.cursor() as cur:

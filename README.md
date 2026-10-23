@@ -7,6 +7,7 @@
 | **GitHub** | [github.com/zakiscoding/homelab-services](https://github.com/zakiscoding/homelab-services) (private) |
 | **Runs on** | iMac (`Mos-iMac`, user `momo`) |
 | **Docs** | [zakiscoding/homelab](https://github.com/zakiscoding/homelab) — architecture, setup log, runbooks |
+| **API reference** | [docs/API.md](docs/API.md) — every endpoint, auth, side effects, job lifecycle |
 | **1TB path** | `/Volumes/1tb drive/homelab-services` |
 
 ## Architecture

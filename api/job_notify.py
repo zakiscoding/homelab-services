@@ -1,7 +1,11 @@
-"""
-Phase 4 — Redis wake queues for workers (notify only).
+"""Phase 4: Redis wake queues for workers (notify only).
 
 Postgres remains the job state source of truth. Workers still claim via API.
+
+``create_job`` and requeues LPUSH the job id onto ``homelab:jobs:wake:train`` (train) or
+``homelab:jobs:wake:imac`` (ingest, embed, train_prep); workers BLPOP to wake early instead of
+sleeping their full poll interval. Queues are trimmed to MAX_QUEUE_LEN. Disabled with
+JOB_NOTIFY_ENABLED=false or an empty REDIS_URL; every call is best-effort.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ _client: redis.Redis | None = None
 
 
 def _redis() -> redis.Redis | None:
+    """Lazily created shared Redis client, or None when notify is disabled."""
     global _client
     if not JOB_NOTIFY_ENABLED or not REDIS_URL:
         return None
@@ -35,6 +40,7 @@ def _redis() -> redis.Redis | None:
 
 
 def queue_for_type(job_type: str) -> str | None:
+    """Wake queue for a job type, or None for types no worker claims (infer, rag_query)."""
     if job_type in TRAIN_TYPES:
         return WAKE_TRAIN
     if job_type in IMAC_TYPES:
@@ -66,6 +72,7 @@ def notify_jobs(jobs: list[tuple[str, str]]) -> int:
 
 
 def status() -> dict[str, Any]:
+    """Report whether notify is enabled and the current length of each wake queue."""
     rds = _redis()
     out: dict[str, Any] = {
         "enabled": JOB_NOTIFY_ENABLED and bool(REDIS_URL),

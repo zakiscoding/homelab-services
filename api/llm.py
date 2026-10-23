@@ -37,6 +37,7 @@ _auto = {"checked_at": 0.0, "openai_up": False}
 
 
 def _openai_up() -> bool:
+    """True if the OpenAI-compatible server answers GET /models with 200 within 2s."""
     try:
         return httpx.get(f"{LLM_URL}/models", headers=_headers(), timeout=2.0).status_code == 200
     except Exception:
@@ -44,6 +45,11 @@ def _openai_up() -> bool:
 
 
 def is_openai() -> bool:
+    """Whether requests should go to the OpenAI-compatible backend.
+
+    Fixed by LLM_BACKEND for ``openai``/``ollama``; in ``auto`` mode the probe result is cached
+    for AUTO_RECHECK_S seconds.
+    """
     if MODE != "auto":
         return MODE == "openai"
     if time.monotonic() - _auto["checked_at"] > AUTO_RECHECK_S:
@@ -58,14 +64,20 @@ def active_backend() -> str:
 
 
 def backend_url() -> str:
+    """Base URL of the active backend (LLM_URL or GPU_URL)."""
     return LLM_URL if is_openai() else GPU_URL
 
 
 def _headers() -> dict[str, str]:
+    """Bearer auth header for the OpenAI-compatible server when LLM_API_KEY is set."""
     return {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
 
 
 async def list_models() -> list[str]:
+    """Model names served by the active backend (vLLM ``/models`` or Ollama ``/api/tags``).
+
+    Raises httpx errors on connection failure or a non-2xx response.
+    """
     async with httpx.AsyncClient(timeout=15.0) as client:
         if is_openai():
             r = await client.get(f"{LLM_URL}/models", headers=_headers())
@@ -77,11 +89,15 @@ async def list_models() -> list[str]:
 
 
 def default_model() -> str:
+    """Default chat model for the active backend (LLM_DEFAULT_MODEL or llama3.2:latest)."""
     return LLM_DEFAULT_MODEL if is_openai() else OLLAMA_DEFAULT_MODEL
 
 
 async def generate(model: str, prompt: str) -> tuple[str, str]:
-    """Single-turn completion. Returns (text, model_used)."""
+    """Single-turn completion. Returns (text, model_used).
+
+    Raises LLMError on an upstream 4xx/5xx; connection errors propagate as httpx exceptions.
+    """
     async with httpx.AsyncClient(timeout=300.0) as client:
         if not is_openai():
             r = await client.post(

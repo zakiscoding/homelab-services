@@ -16,6 +16,9 @@ def wait_for_wake(queues: list[str], timeout_sec: float) -> bool:
     """
     Block up to timeout_sec for a wake signal.
     Returns True if a queue fired; False on timeout or if notify disabled.
+
+    BLPOP consumes one wake entry; the popped job id is ignored because the worker always claims
+    through the API. Redis errors return False so the caller falls back to plain polling.
     """
     if not JOB_NOTIFY_ENABLED or not REDIS_URL or not queues:
         return False
