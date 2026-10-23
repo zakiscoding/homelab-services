@@ -1,4 +1,4 @@
-"""Phase 5 ??? Prometheus metrics (scrape /metrics; Postgres-backed job gauges)."""
+"""Phase 5 — Prometheus metrics (scrape /metrics; Postgres-backed job gauges)."""
 
 from __future__ import annotations
 
@@ -169,4 +169,3 @@ def prometheus_middleware(app):  # noqa: ANN001
 
     app.add_middleware(_Mw)
     return app
-

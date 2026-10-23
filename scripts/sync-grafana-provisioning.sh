@@ -31,7 +31,7 @@ if [[ -n "$CID" ]]; then
     docker cp "$f" "$CID:/var/lib/grafana/dashboards/$(basename "$f")"
   done
   docker restart "$CID"
-  echo "Grafana restarted ??? dashboards should appear in folder Homelab."
+  echo "Grafana restarted — dashboards should appear in folder Homelab."
 else
   echo "Grafana container not running; start stack then re-run this script."
 fi

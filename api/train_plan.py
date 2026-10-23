@@ -45,7 +45,7 @@ def build_shard_plan(
     indices = list(range(total_samples))
     rng = random.Random(seed)
     rng.shuffle(indices)
-    val_n = max(1, int(total_samples * val_ratio))
+    val_n = int(total_samples * val_ratio) if val_ratio > 0 else 0
     val_indices = indices[:val_n]
     train_indices = indices[val_n:]
     if not train_indices:

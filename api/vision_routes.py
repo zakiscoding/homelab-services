@@ -48,14 +48,25 @@ class ReactionResponse(BaseModel):
 async def vision_status(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """GPU reaction model health + metadata."""
     _require_api_key(x_api_key)
+    started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             health = await client.get(f"{GPU_VISION_URL}/health")
             health.raise_for_status()
             info = await client.get(f"{GPU_VISION_URL}/info", headers=_vision_headers())
             info.raise_for_status()
+        from metrics import VISION_LATENCY, VISION_REQUESTS
+
+        VISION_REQUESTS.labels(endpoint="/vision/status", status="200").inc()
+        VISION_LATENCY.labels(endpoint="/vision/status").observe(time.perf_counter() - started)
         return {"vision": "ok", "gpu_vision_url": GPU_VISION_URL, **info.json()}
     except Exception as e:
+        try:
+            from metrics import VISION_REQUESTS
+
+            VISION_REQUESTS.labels(endpoint="/vision/status", status="502").inc()
+        except Exception:
+            pass
         return {"vision": "down", "gpu_vision_url": GPU_VISION_URL, "error": str(e)}
 
 
@@ -88,4 +99,11 @@ async def vision_reaction(
     total_ms = int((time.perf_counter() - started) * 1000)
     if "duration_ms" not in data:
         data["duration_ms"] = total_ms
+    try:
+        from metrics import VISION_LATENCY, VISION_REQUESTS
+
+        VISION_REQUESTS.labels(endpoint="/vision/reaction", status="200").inc()
+        VISION_LATENCY.labels(endpoint="/vision/reaction").observe(time.perf_counter() - started)
+    except Exception:
+        pass
     return ReactionResponse(**data)
