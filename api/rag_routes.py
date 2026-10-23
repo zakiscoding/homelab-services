@@ -178,7 +178,7 @@ async def rag_query(
         hits = filter_by_threshold(hits)
     except Exception as e:
         if job_id:
-            mark_job_failed(UUID(job_id), str(e), error_class="transient")
+            mark_job_failed(UUID(job_id), str(e), error_class="transient", retry=False)
         raise HTTPException(status_code=503, detail=f"qdrant_error: {e}") from e
 
     if not hits:
@@ -211,7 +211,7 @@ async def rag_query(
         answer, model_used = await llm.generate(body.model, prompt)
     except Exception as e:  # llm.LLMError (upstream 4xx/5xx) or a connection error
         if job_id:
-            mark_job_failed(UUID(job_id), str(e), error_class="transient")
+            mark_job_failed(UUID(job_id), str(e), error_class="transient", retry=False)
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     duration_ms = int((time.perf_counter() - started) * 1000)

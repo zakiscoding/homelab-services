@@ -51,6 +51,7 @@ from jobs import (
     mark_job_running,
     mark_job_succeeded,
     record_worker_heartbeat,
+    renew_lease,
     reset_stale_running_to_pending,
 )
 from metrics import metrics_body, prometheus_middleware
@@ -315,7 +316,7 @@ async def chat(
             text, model_used = await llm.generate(body.model, body.prompt)
         except llm.LLMError as e:
             if job_id:
-                mark_job_failed(UUID(job_id), str(e), error_class="transient")
+                mark_job_failed(UUID(job_id), str(e), error_class="transient", retry=False)
             raise HTTPException(status_code=502, detail=str(e)) from e
         duration_ms = int((time.perf_counter() - started) * 1000)
         log_chat(body.prompt, text, model_used, duration_ms, job_id)
@@ -328,7 +329,7 @@ async def chat(
         raise
     except Exception as e:
         if job_id:
-            mark_job_failed(UUID(job_id), str(e), error_class="transient")
+            mark_job_failed(UUID(job_id), str(e), error_class="transient", retry=False)
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
@@ -560,19 +561,50 @@ def worker_job_failed(
 
 
 @app.post("/internal/worker/jobs/reset-stale")
-def worker_reset_stale(x_worker_key: str | None = Header(default=None)) -> dict[str, int]:
-    """Requeue jobs whose lease expired, then force-reset every remaining running job.
+def worker_reset_stale(
+    all_workers: bool = False,
+    x_worker_key: str | None = Header(default=None),
+    x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
+) -> dict[str, int]:
+    """Requeue jobs whose lease expired, then force-reset the *caller's* orphaned running jobs.
 
-    Auth: ``X-Worker-Key``. Called by the iMac worker on startup. ``lease_expired_requeued`` counts
-    expired-lease jobs that were requeued or failed (expire_stale_leases); ``forced_reset`` counts
-    running train/ingest/embed/train_prep jobs put back to ``pending`` regardless of lease
-    (reset_stale_running_to_pending), which includes a train job a GPU worker may still be
-    executing. 500 on DB errors.
+    Auth: ``X-Worker-Key``. Called by workers on startup. ``lease_expired_requeued`` counts
+    expired-lease jobs requeued or failed plus abandoned inline jobs closed (expire_stale_leases);
+    ``forced_reset`` counts running jobs held by ``X-Worker-Id`` put back to ``pending``
+    (a restarted worker can't still be running them). Jobs held by other workers are untouched,
+    so one worker restarting no longer requeues another worker's live training job.
+    ``?all_workers=true`` (operator only) resets every running job. Without ``X-Worker-Id``
+    nothing is force-reset. 500 on DB errors.
     """
     require_worker_key(x_worker_key)
     try:
         expired = expire_stale_leases()
-        forced = reset_stale_running_to_pending()
+        if all_workers:
+            forced = reset_stale_running_to_pending(None)
+        elif x_worker_id:
+            forced = reset_stale_running_to_pending(x_worker_id)
+        else:
+            forced = 0
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     return {"lease_expired_requeued": expired, "forced_reset": forced}
+
+
+@app.post("/internal/worker/jobs/{job_id}/renew", response_model=JobResponse)
+def worker_renew_lease(
+    job_id: UUID,
+    x_worker_key: str | None = Header(default=None),
+    x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
+) -> JobResponse:
+    """Extend the lease on a running job this worker holds (keep-alive for long jobs).
+
+    Auth: ``X-Worker-Key``; ownership by ``X-Worker-Id`` (must match ``locked_by``). Workers call
+    it every few minutes while a job runs so lease expiry doesn't requeue live work. 409 if the
+    job isn't running or another worker holds it: the caller should stop, because its job was
+    requeued or taken over.
+    """
+    require_worker_key(x_worker_key)
+    job = renew_lease(job_id, x_worker_id or "unknown-worker")
+    if not job:
+        raise HTTPException(status_code=409, detail="Job not running or not held by this worker")
+    return JobResponse(**job)

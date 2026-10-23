@@ -175,14 +175,21 @@ def create_train_job(
 def create_infer_job() -> dict[str, Any]:
     """Create an ``infer`` bookkeeping job for /chat, refusing while training holds the GPU.
 
-    Raises RuntimeError("gpu_busy: train job running") if any train job is running and
-    ``allow_infer_during_train`` is not "true". The check and the insert are not atomic.
+    Raises RuntimeError("gpu_busy: train job running") if a train job is running on the GPU PC
+    and ``allow_infer_during_train`` is not "true". Routed jobs (payload.route) are excluded:
+    the router runs them on Modal or alongside the resident vLLM server, so they don't take the
+    GPU away from chat. The check and the insert are not atomic.
     """
     if _get_setting("allow_infer_during_train") != "true":
         with _connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT 1 FROM jobs WHERE type = 'train' AND status = 'running' LIMIT 1"
+                    """
+                    SELECT 1 FROM jobs
+                    WHERE type = 'train' AND status = 'running'
+                      AND (payload IS NULL OR NOT payload::jsonb ? 'route')
+                    LIMIT 1
+                    """
                 )
                 if cur.fetchone():
                     raise RuntimeError("gpu_busy: train job running")
@@ -263,13 +270,65 @@ def _expire_leases_for_types(job_types: tuple[str, ...], lease_minutes: int) -> 
 
 
 def expire_stale_leases() -> int:
-    """Requeue expired running jobs (train + iMac types) or mark failed.
-
-    Returns the combined count from both sweeps.
-    """
+    """Requeue expired running jobs (train + iMac types) or mark failed, and close
+    abandoned inline jobs. Returns the combined count."""
     n = _expire_leases_for_types(("train",), LEASE_MINUTES_TRAIN)
     n += _expire_leases_for_types(IMAC_JOB_TYPES, LEASE_MINUTES_IMAC)
+    n += expire_abandoned_inline_jobs()
     return n
+
+
+INLINE_JOB_TYPES = ("infer", "rag_query")
+INLINE_ABANDON_MINUTES = 10
+
+
+def expire_abandoned_inline_jobs() -> int:
+    """Fail ``infer`` / ``rag_query`` rows left pending or running for > 10 minutes.
+
+    These jobs are bookkeeping for a synchronous API request (/chat, /rag/query). No worker
+    claims them, so a row can only be stranded if the API process died mid-request (or by
+    older code that requeued failures). Marks them ``failed`` / ``inline_job_abandoned``.
+    """
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET status = 'failed', finished_at = NOW(), lease_expires_at = NULL,
+                    error_message = 'inline_job_abandoned', error_class = 'permanent'
+                WHERE type = ANY(%s) AND status IN ('pending', 'running')
+                  AND created_at < NOW() - make_interval(mins => %s)
+                """,
+                (list(INLINE_JOB_TYPES), INLINE_ABANDON_MINUTES),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n
+
+
+def renew_lease(job_id: UUID, worker_id: str) -> dict[str, Any] | None:
+    """Extend the lease of a running job held by ``worker_id`` (worker keep-alive).
+
+    Long jobs call this every few minutes so lease expiry doesn't requeue work that is still
+    running. The new lease is NOW() + the job type's lease (15 min train, 5 min iMac types).
+    Returns the updated job, or None if the job isn't running or is held by another worker
+    (the worker should stop: its job was requeued or taken over).
+    """
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE jobs
+                SET lease_expires_at = NOW() + make_interval(mins =>
+                    CASE WHEN type = 'train' THEN %s ELSE %s END)
+                WHERE id = %s AND status = 'running' AND locked_by = %s
+                RETURNING {JOB_COLUMNS}
+                """,
+                (LEASE_MINUTES_TRAIN, LEASE_MINUTES_IMAC, job_id, worker_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _row_to_job(row) if row else None
 
 
 def claim_train_job(worker_id: str, routed: bool = False) -> dict[str, Any] | None:
@@ -352,22 +411,28 @@ def claim_train_job(worker_id: str, routed: bool = False) -> dict[str, Any] | No
     return job
 
 
-def reset_stale_running_to_pending() -> int:
-    """Force-reset all running train + iMac jobs (operator / worker startup).
+def reset_stale_running_to_pending(worker_id: str | None) -> int:
+    """Force-reset running train + iMac jobs held by ``worker_id`` (worker startup).
 
-    Clears lock, start time and lease without checking lease expiry and without bumping
-    ``attempt``, then sends wake notifications. Returns the number of jobs reset.
+    A worker that restarts can't still be running the jobs it held, so its own running rows are
+    orphans: they go back to ``pending`` (lock, start time and lease cleared, ``attempt`` not
+    bumped) with wake notifications. Jobs held by *other* workers are left alone; they're
+    covered by lease expiry instead. ``worker_id=None`` resets every running job (operator use
+    only: it would also requeue a job a live worker is still executing). Returns the count.
     """
+    scope = "" if worker_id is None else "AND locked_by = %s"
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 UPDATE jobs
                 SET status = 'pending', locked_by = NULL,
                     started_at = NULL, lease_expires_at = NULL
                 WHERE type IN ('train', 'ingest', 'embed', 'train_prep') AND status = 'running'
+                  {scope}
                 RETURNING id, type
-                """
+                """,
+                () if worker_id is None else (worker_id,),
             )
             rows = cur.fetchall()
             n = len(rows)

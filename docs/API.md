@@ -47,10 +47,11 @@ Rules:
 - **Concurrency.** At most one `train` job running at a time (across routed and non-routed), and at most one iMac job (`ingest`/`embed`/`train_prep`) at a time. `FOR UPDATE SKIP LOCKED` keeps two claimers off the same row. The one-at-a-time rule is a `NOT EXISTS` check rather than a lock, so it is not airtight under a simultaneous claim race.
 - **Routed jobs.** A train job whose payload has a `route` key is claimed only via `POST /internal/worker/jobs/claim?routed=true` (the gpu-systems-lab router worker, which picks local RTX 5070 vs Modal). The default claim only returns jobs without `route`.
 - **Distributed train.** A `train` job with `distributed=true` is not claimable until its `train_prep` job has written a ready `train_plans` row (`ready_at` set).
-- **Leases.** Claiming sets `locked_by`, `started_at` (first claim only) and `lease_expires_at`. Nothing renews a lease (heartbeats do not), so a job running past its lease is requeued by the next sweep. Expired leases are swept on every claim of the same family and by `reset-stale`.
+- **Leases.** Claiming sets `locked_by`, `started_at` (first claim only) and `lease_expires_at` (15 min train, 5 min iMac types). Workers keep long jobs alive with `POST /internal/worker/jobs/{id}/renew` (the GPU QLoRA worker and router worker every 5 min, the iMac worker every 2 min). A job whose lease still expires (its worker died) is requeued by the next sweep. Expired leases are swept on every claim of the same family and by `reset-stale`.
 - **Retries.** `max_attempts` defaults to 3 (schema). A failure retries only when `retry` is true (default: `error_class == "transient"`), `error_class` is `transient`, and `attempt + 1 < max_attempts`. Backoff by current attempt: 30 s, 120 s, then 600 s. Lease expiry follows the same rule with `error_message = lease_expired` (or `lease_expired_max_attempts` when exhausted).
 - **Wake queues.** New and requeued jobs `LPUSH` their id onto `homelab:jobs:wake:train` (train) or `homelab:jobs:wake:imac` (ingest/embed/train_prep), trimmed to 1000 entries. Workers `BLPOP` them to wake early. Disabled by `JOB_NOTIFY_ENABLED=false`. Losing a wake only delays a job until the next poll.
-- **Flags** (`system_settings`): `training_paused = "true"` makes `POST /jobs` return 503; `allow_infer_during_train = "true"` lets `/chat` run while a train job is running.
+- **Inline jobs.** `infer` (/chat) and `rag_query` (/rag/query) are bookkeeping for synchronous requests; no worker claims them. LLM failures mark them `failed` immediately (no retry), and any left `pending`/`running` for more than 10 minutes (API died mid-request) are closed as `inline_job_abandoned` by the lease sweep.
+- **Flags** (`system_settings`): `training_paused = "true"` makes `POST /jobs` return 503; `allow_infer_during_train = "true"` lets `/chat` run while a non-routed train job is running (routed jobs never block chat: they run on Modal or beside the resident vLLM server).
 
 ## LLM backend selection
 
@@ -114,10 +115,9 @@ Body (`ChatRequest`): `prompt` (str, required, min length 1), `model` (str, defa
 Response (`ChatResponse`): `{"model", "response", "duration_ms", "job_id"}`.
 Side effects: inserts an `infer` job and sets it `running` (no lease), calls the LLM backend,
 inserts `chat_logs`, marks the job `succeeded`, `INCR homelab:requests:total` in Redis.
-Errors: 503 `gpu_busy` when a train job is running and `allow_infer_during_train` is not set;
-502 on LLM failure (the infer job is passed to `mark_job_failed` as transient, which puts it
-back to `pending` with backoff while attempts remain; nothing claims infer jobs). If job
-creation fails for a non-`RuntimeError` reason, chat runs without a job.
+Errors: 503 `gpu_busy` when a non-routed train job is running and `allow_infer_during_train`
+is not set; 502 on LLM failure (the infer job is marked `failed`, no retry). If job creation
+fails for a non-`RuntimeError` reason, chat runs without a job.
 
 ### `GET /stats`
 Response: `{"requests_total": N}` from Redis `homelab:requests:total` (0 without Redis).
@@ -226,10 +226,17 @@ Body (`JobFailBody`): `error_message` (str, required; truncated to 2000), `error
 Retries (back to `pending`, `attempt+1`, backoff, wake) or fails the job per the retry rule.
 Response: JobResponse. Errors: 409 if missing or already `succeeded`/`failed`.
 
+### `POST /internal/worker/jobs/{job_id}/renew`
+Lease keep-alive. Extends `lease_expires_at` to NOW() + the type's lease for a running job whose
+`locked_by` equals `X-Worker-Id`. Response: the job (`JobResponse`). Errors: 409 if the job isn't
+running or another worker holds it (the caller's job was requeued or taken over).
+
 ### `POST /internal/worker/jobs/reset-stale`
-Sweeps expired leases (requeue or fail), then force-resets **every** running
-train/ingest/embed/train_prep job to `pending` (no attempt bump), including a train job a GPU
-worker may still be running. The iMac worker calls this on startup.
+Sweeps expired leases (requeue or fail) and abandoned inline jobs, then force-resets the
+**caller's own** running train/ingest/embed/train_prep jobs (`locked_by = X-Worker-Id`) to
+`pending` (no attempt bump). A restarted worker can't still be running them; jobs held by other
+workers are left alone. Workers call this on startup. `?all_workers=true` (operator only) resets
+every running job; without `X-Worker-Id` nothing is force-reset.
 Response: `{"lease_expired_requeued": N, "forced_reset": M}`. Errors: 500 on DB errors.
 
 ## Environment variables
