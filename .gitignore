@@ -4,3 +4,5 @@
 data/
 *.pem
 *.key
+# pg_dump output from scripts/migrate-all.sh and backup-postgres.sh (contains real data)
+backups/

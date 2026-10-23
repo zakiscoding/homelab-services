@@ -18,8 +18,9 @@ Job types and who runs them:
 
 Lower ``priority`` claims first (PRIORITY), then oldest ``created_at``. ``scheduled_at`` delays
 retries: BACKOFF_SECONDS is indexed by the current attempt (30s, 120s, then 600s). With the
-schema default ``max_attempts = 3`` a job runs at most three times. There is no lease-renewal
-call, so a job that runs longer than its lease is requeued by the next expiry sweep.
+schema default ``max_attempts = 3`` a job runs at most three times. Workers keep long jobs
+alive with renew_lease() (POST /internal/worker/jobs/{id}/renew); only a job whose worker stops
+renewing (it died) outlives its lease and is requeued by the next expiry sweep.
 
 Redis is used only for wake notifications (job_notify); a lost notification just means the
 worker finds the job on its next poll.
