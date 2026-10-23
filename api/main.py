@@ -140,6 +140,10 @@ class TrainJobCreate(BaseModel):
     shard_count: int | None = None
     grad_accum_steps: int | None = None
     use_amp: bool | None = None
+    # gpu-systems-lab router job: {"command", "vram_gb", "local_minutes", "gpus",
+    # "max_usd", "deadline_min"}. Claimed only by the router worker, which runs it on the
+    # local RTX 5070 or a Modal GPU.
+    route: dict[str, Any] | None = None
 
 
 class ExperimentBody(BaseModel):
@@ -284,6 +288,10 @@ def jobs_create_train(
         hyper["grad_accum_steps"] = b.grad_accum_steps
     if b.use_amp is not None:
         hyper["use_amp"] = b.use_amp
+    if b.route:
+        if not str(b.route.get("command", "")).strip():
+            raise HTTPException(status_code=422, detail="route.command is required")
+        hyper["route"] = b.route
     try:
         job = create_train_job(
             dataset_version=b.dataset_version,
@@ -352,14 +360,16 @@ def worker_claim_imac(
 
 @app.post("/internal/worker/jobs/claim", response_model=None)
 def worker_claim_train(
+    routed: bool = False,
     x_worker_key: str | None = Header(default=None),
     x_worker_id: str | None = Header(default=None, alias="X-Worker-Id"),
 ):
+    """routed=true: only jobs with a route spec (router worker); default: only jobs without."""
     require_worker_key(x_worker_key)
     worker_id = x_worker_id or "unknown-worker"
     record_worker_heartbeat(worker_id)
     try:
-        job = claim_train_job(worker_id)
+        job = claim_train_job(worker_id, routed=routed)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     if not job:

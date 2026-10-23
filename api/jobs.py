@@ -212,16 +212,27 @@ def expire_stale_leases() -> int:
     return n
 
 
-def claim_train_job(worker_id: str) -> dict[str, Any] | None:
+def claim_train_job(worker_id: str, routed: bool = False) -> dict[str, Any] | None:
+    """Claim the next pending train job.
+
+    routed=False (the Windows QLoRA worker): only jobs without a payload["route"] spec.
+    routed=True (gpu-systems-lab router worker): only jobs with one; it decides local RTX vs Modal.
+    """
     _expire_leases_for_types(("train",), LEASE_MINUTES_TRAIN)
+    route_filter = (
+        "payload IS NOT NULL AND payload::jsonb ? 'route'"
+        if routed
+        else "(payload IS NULL OR NOT payload::jsonb ? 'route')"
+    )
     with _connect() as conn:
         with conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT id FROM jobs
                     WHERE type = 'train' AND status = 'pending'
                       AND scheduled_at <= NOW()
+                      AND {route_filter}
                       AND NOT EXISTS (
                           SELECT 1 FROM jobs
                           WHERE type = 'train' AND status = 'running'
