@@ -3,6 +3,8 @@
 # All migrations are idempotent (IF NOT EXISTS / DROP+ADD CONSTRAINT), so re-running is safe.
 # Run on the iMac with the stack up:   bash scripts/migrate-all.sh
 set -euo pipefail
+# non-interactive ssh sessions don't load the shell profile, so Homebrew's docker isn't on PATH
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 source "$SCRIPT_DIR/docker-1tb-env.sh" >/dev/null 2>&1 || true
@@ -10,9 +12,12 @@ source "$SCRIPT_DIR/docker-1tb-env.sh" >/dev/null 2>&1 || true
 PG=homelab-services-postgres-1
 psql_in() { docker exec -i "$PG" sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" '"$1"; }
 
+docker inspect -f '{{.State.Running}}' "$PG" | grep -q true || { echo "$PG is not running; start the stack first" >&2; exit 1; }
+
 mkdir -p backups
 F="backups/homelab-pre-migrate-$(date +%Y%m%d-%H%M%S).sql"
 docker exec "$PG" sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$F"
+[[ -s "$F" ]] || { echo "backup $F is empty; aborting before any migration" >&2; exit 1; }
 echo "backup: $F ($(wc -c < "$F") bytes)"
 
 for f in postgres/0*.sql; do
