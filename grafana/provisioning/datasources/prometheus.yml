@@ -7,3 +7,14 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+  # GPU PC's Ubuntu boot (zak-gpu-node): DCGM GPU metrics + node-exporter,
+  # gpu-systems-lab/observability. Over Tailscale; down while the PC runs Windows.
+  - name: GPU node (zak-gpu-node)
+    uid: gpu-node-prom
+    type: prometheus
+    access: proxy
+    url: http://100.121.51.35:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      timeInterval: 5s
