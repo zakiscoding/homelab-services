@@ -1,5 +1,9 @@
 # Homelab API reference
 
+[homelab](https://github.com/zakiscoding/homelab) (docs hub) · **homelab-services** · [homelab-web](https://github.com/zakiscoding/homelab-web) · [homelab-gpu](https://github.com/zakiscoding/homelab-gpu) · [gpu-systems-lab](https://github.com/zakiscoding/gpu-systems-lab)
+
+**Every endpoint of the iMac FastAPI gateway: auth, request and response shapes, side effects and the job lifecycle.** Back to [README](../README.md). Queue design with diagrams: [JOBS.md](JOBS.md). Runbook: [OPERATIONS.md](OPERATIONS.md).
+
 FastAPI app in `api/main.py` (title "Homelab API", version 0.8.0), served on the iMac at
 `:8000` and fronted by Caddy / the `homelab-web` BFF. This reference is derived from the code
 in `api/`; FastAPI's own `/docs`, `/redoc` and `/openapi.json` are also served (no auth).

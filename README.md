@@ -1,99 +1,191 @@
 # homelab-services
 
-**iMac services stack** — API gateway, databases, reverse proxy, monitoring, MLflow. Proxies LLM and vision requests to the GPU node.
+[homelab](https://github.com/zakiscoding/homelab) (docs hub) · **homelab-services** · [homelab-web](https://github.com/zakiscoding/homelab-web) · [homelab-gpu](https://github.com/zakiscoding/homelab-gpu) · [gpu-systems-lab](https://github.com/zakiscoding/gpu-systems-lab)
 
-| | |
-|--|--|
-| **GitHub** | [github.com/zakiscoding/homelab-services](https://github.com/zakiscoding/homelab-services) (private) |
-| **Runs on** | iMac (`Mos-iMac`, user `momo`) |
-| **Docs** | [zakiscoding/homelab](https://github.com/zakiscoding/homelab) — architecture, setup log, runbooks |
-| **API reference** | [docs/API.md](docs/API.md) — every endpoint, auth, side effects, job lifecycle |
-| **1TB path** | `/Volumes/1tb drive/homelab-services` |
+**The iMac control plane: API gateway, Postgres job queue, RAG, web UI hosting and monitoring for the homelab, run with Docker Compose on Colima.**
+
+## What's inside
+
+- **FastAPI gateway** (`api/`, :8000): chat, RAG, vision proxy, job queue and the worker API. Every endpoint is in [docs/API.md](docs/API.md).
+- **Postgres job queue**: Postgres is the single source of truth for jobs, with leases, retries and priorities. Redis only sends wake signals. See [docs/JOBS.md](docs/JOBS.md).
+- **RAG**: the iMac worker chunks and embeds documents (fastembed, CPU) into Qdrant. `/rag/query` retrieves from Qdrant and answers with the LLM.
+- **LLM routing**: with `LLM_BACKEND=auto`, chat uses vLLM on the GPU PC's Ubuntu boot when it is up and falls back to Ollama on its Windows boot.
+- **Observability**: Prometheus, Pushgateway (GPU metrics from Windows) and Grafana. The GPU node's own Prometheus is added as a second datasource, so one Grafana shows everything.
+- **MLflow** (:5001): experiment tracking, backed by the Postgres `mlflow` database.
 
 ## Architecture
 
-```text
-Browser (Tailscale)
-        │
-        ├─ :3081 ──► homelab-web (Next.js)
-        └─ :80   ──► Caddy ──► homelab-web
-                │
-                │  /api/homelab/* (BFF) + FastAPI :8000
-                ▼
-         Postgres / Redis / Qdrant / MLflow
-                │
-                │  Tailscale
-                ▼
-         GPU PC (zak_pc)
-           Ollama :11434
-           Reaction CNN :8100 (homelab-gpu)
+```mermaid
+flowchart LR
+    Browser["Browser (Tailscale)"]
+
+    subgraph IMAC["iMac 100.91.113.98 (Colima, docker-compose)"]
+        Caddy["caddy :80 / :443"]
+        Web["web (homelab-web) :3081"]
+        API["api (FastAPI) :8000"]
+        Worker["imac-worker<br/>ingest / embed / train_prep"]
+        PG[("postgres<br/>jobs SSOT + mlflow DB")]
+        Redis[("redis :6379<br/>wake queues, cache")]
+        Qdrant[("qdrant :6333")]
+        Prom["prometheus :9090"]
+        Push["pushgateway :9091"]
+        Graf["grafana :3000"]
+        MLflow["mlflow :5001"]
+    end
+
+    subgraph GPUWIN["GPU PC, Windows boot 100.88.71.33"]
+        Ollama["Ollama :11434"]
+        Vision["reaction CNN :8100"]
+        QLoRA["QLoRA GPU worker"]
+    end
+
+    subgraph GPUUBU["GPU PC, Ubuntu boot 100.121.51.35"]
+        VLLM["vLLM :8000/v1"]
+        NodeProm["GPU-node Prometheus :9090"]
+    end
+
+    subgraph LAPTOP["Laptop 100.73.132.95"]
+        Router["router worker<br/>local RTX or Modal"]
+    end
+
+    Browser --> Caddy
+    Browser --> Web
+    Caddy --> Web
+    Web -->|"BFF, x-api-key"| API
+    API --> PG
+    API --> Redis
+    API --> Qdrant
+    Worker -->|"X-Worker-Key"| API
+    Worker --> Qdrant
+    Worker --> PG
+    API -->|"LLM_BACKEND=auto, preferred"| VLLM
+    API -->|"fallback"| Ollama
+    API -->|"/vision"| Vision
+    QLoRA -->|"claim train jobs"| API
+    QLoRA -->|"GPU metrics"| Push
+    QLoRA -->|"runs"| MLflow
+    Router -->|"claim?routed=true"| API
+    MLflow --> PG
+    Prom --> API
+    Prom --> Qdrant
+    Prom --> Push
+    Graf --> Prom
+    Graf -->|"second datasource"| NodeProm
 ```
 
-## Docker: Colima (1TB drive)
+The GPU PC dual-boots, so only one of the Windows or Ubuntu groups is online at a time. Grafana
+panels for the GPU node are empty while the PC runs Windows.
 
-We use **Colima**, not Docker Desktop. VM disk: `/Volumes/1tb drive/homelab-runtime/colima`.
+## Quickstart
+
+On the iMac (macOS, Apple M1). Prerequisites: `brew install colima docker docker-compose`, the
+1TB drive mounted at `/Volumes/1tb drive`, and `homelab-web` cloned next to this repo (it is the
+`web` build context).
 
 ```bash
-brew install colima docker docker-compose
-./scripts/setup-1tb.sh
+cd "/Volumes/1tb drive/homelab-services"
+./scripts/ensure-homelab-web.sh        # clone ../homelab-web if missing
+./scripts/bootstrap-env.sh             # create .env with random secrets (skips if .env exists)
+./scripts/setup-1tb.sh                 # first time only: data dirs + Colima VM on the 1TB drive
+./scripts/start-stack.sh               # start Colima if needed, build and start every service
+bash scripts/migrate-all.sh            # back up Postgres, apply postgres/0*.sql migrations
+```
+
+Then open http://100.91.113.98:3081 (web UI) and http://100.91.113.98:3000 (Grafana).
+
+On the Windows laptop, create a `.env` for local work with `.\scripts\bootstrap-env.ps1`.
+
+## Layout
+
+| Path | Purpose |
+|------|---------|
+| `docker-compose.yml` | The whole stack: caddy, web, api, imac-worker, postgres, redis, qdrant, prometheus, pushgateway, grafana, mlflow |
+| `api/` | FastAPI app: `main.py` (routes, worker API), `jobs.py` (queue), `llm.py` (backend selection), `rag_*.py`, `vision_routes.py`, `train_plan.py`, `metrics.py`, `job_notify.py` |
+| `worker/` | iMac worker: `poll_imac.py` (claim loop, lease renewal), `run_ingest.py`, `run_embed.py`, `run_train_prep.py`, `job_wake.py` |
+| `postgres/` | `init.sql` (first boot) and idempotent migrations `002`–`007` |
+| `prometheus/config/` | Scrape config (prometheus, api, qdrant, pushgateway) |
+| `grafana/` | Datasource and dashboard provisioning; dashboards: Homelab ML Platform, Homelab Stack, GPU node |
+| `caddy/` | Caddyfile variants (LAN default, public HTTPS template) |
+| `scripts/` | Bootstrap, start, migrate, backup, config sync, Caddy helpers |
+| `docs/` | [API.md](docs/API.md), [OPERATIONS.md](docs/OPERATIONS.md), [JOBS.md](docs/JOBS.md) |
+| `data/` | Persistent volumes (gitignored) |
+| `backups/` | `pg_dump` output from the backup and migrate scripts (not in `.gitignore`; never commit it) |
+
+## Operations
+
+Run these on the iMac from the repo root. Source the Colima environment first in every new
+shell. Over non-interactive SSH, also put Homebrew on PATH. The full runbook is
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+```bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"   # non-interactive ssh only
 source ./scripts/docker-1tb-env.sh
-./scripts/start-stack.sh
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3081/
 ```
 
-Uses `docker-compose` (hyphen) and `~/1tb-drive` symlink when paths have spaces.
+| Task | Command |
+|------|---------|
+| Start everything | `./scripts/start-stack.sh` |
+| Stop the stack | `docker-compose down` (data in `./data/` is kept) |
+| Status | `docker-compose ps` |
+| Logs | `docker-compose logs -f --tail=100 api imac-worker` |
+| Deploy an update | `git pull && docker-compose up -d --build <service>` (for example `api imac-worker`) |
+| Apply migrations | `bash scripts/migrate-all.sh` (takes a backup first) |
+| Back up Postgres | `./scripts/backup-postgres.sh` (keeps 14 days in `backups/`) |
+| Sync Grafana dashboards | `./scripts/sync-grafana-provisioning.sh` |
+| Sync Prometheus config | `./scripts/sync-prometheus-config.sh` |
 
-## Services (Tailscale `100.91.113.98`)
-
-| Service | Port | URL / notes |
-|---------|------|-------------|
-| **Web UI** (`homelab-web`) | **3081** | http://100.91.113.98:3081 — chat, RAG, reactions, status |
-| Caddy → Web UI | 80 | http://100.91.113.98/ |
-| FastAPI | 8000 | `/chat`, `/rag/*`, `/vision/*`, `/jobs` (`x-api-key`) |
-| GPU worker API | 8000 | `/internal/worker/*` (`X-Worker-Key`) |
-| Grafana | 3000 | http://100.91.113.98:3000 |
-| Prometheus | 9090 | http://100.91.113.98:9090 |
-| Pushgateway | 9091 | GPU metrics push target |
-| Qdrant | 6333 | http://100.91.113.98:6333 |
-| MLflow | 5001 | http://100.91.113.98:5001 |
-| Redis | 6379 | Job wake (GPU worker; LAN/Tailscale only) |
-
-Persistent data: `./data/` (gitignored).
-
-## Migrations (after pull)
+Health checks:
 
 ```bash
-source ./scripts/docker-1tb-env.sh
-./scripts/migrate-distributed-train.sh   # Phase 6 — train_plans / shards
-./scripts/migrate-mlflow.sh              # mlflow database
-./scripts/sync-grafana-provisioning.sh
-./scripts/sync-prometheus-config.sh
-docker-compose up -d --build
+curl -s http://localhost:8000/health                  # {"status":"ok"}
+curl -s http://localhost:8000/health/gpu              # active LLM backend: openai (vLLM) or ollama
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3081/   # web UI, expect 200
+curl -s http://localhost:9090/-/ready                 # Prometheus
+curl -s http://localhost:3000/api/health              # Grafana
+curl -s http://localhost:6333/readyz                  # Qdrant
 ```
 
-## Git
+## Configuration
 
-```bash
-git pull
-# edit, then:
-git add . && git commit -m "..." && git push
-```
+`.env` is created by `bootstrap-env.sh` from `.env.example` and is never committed. Variable
+names only; see `.env.example` and the table in [docs/API.md](docs/API.md#environment-variables).
 
-Never commit `.env`. Create it once:
+| Group | Variables |
+|-------|-----------|
+| LLM | `LLM_BACKEND`, `LLM_URL`, `LLM_API_KEY`, `LLM_DEFAULT_MODEL`, `LLM_MAX_TOKENS`, `GPU_URL` |
+| Vision | `GPU_VISION_URL`, `REACTION_SERVE_KEY` |
+| Postgres | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
+| Auth | `API_KEY` (user `x-api-key`), `WORKER_API_KEY` (worker `X-Worker-Key`) |
+| Jobs | `JOB_NOTIFY_ENABLED` |
+| Monitoring | `GRAFANA_USER`, `GRAFANA_PASSWORD` |
+| MLflow | `MLFLOW_PORT` (optional) |
+| Public HTTPS (optional) | `DOMAIN`, `ACME_EMAIL`, `WEB_AUTH_USER`, `WEB_AUTH_HASH` |
 
-```bash
-./scripts/bootstrap-env.sh          # iMac / Linux
-# Windows laptop: .\scripts\bootstrap-env.ps1
-```
+**`LLM_BACKEND`** picks the backend for `/chat` and `/rag/query`:
 
-## Web UI scripts
+| Value | Behavior |
+|-------|----------|
+| `ollama` (code default) | Ollama at `GPU_URL`, the GPU PC's Windows boot |
+| `openai` | vLLM or any OpenAI-compatible server at `LLM_URL` with `LLM_API_KEY`, the GPU PC's Ubuntu boot |
+| `auto` (recommended) | vLLM when `LLM_URL/models` answers within 2 s, otherwise Ollama; re-checked at most every 30 s. Chat follows whichever OS the GPU PC is booted into. |
 
-| Script | Purpose |
-|--------|---------|
-| `ensure-homelab-web.sh` | Clone sibling `homelab-web` repo |
-| `render-caddyfile.sh` | LAN or public Caddy config |
-| `sync-caddy-config.sh` | Colima-safe Caddyfile inject when `DOMAIN` set |
-| `bootstrap-env.sh` | Generate `.env` with random secrets |
-| `sync-grafana-provisioning.sh` | Copy dashboards into `data/grafana` |
+`LLM_API_KEY` must match `VLLM_API_KEY` in `gpu-systems-lab/serving/.env` on the GPU node.
 
-Docs: [homelab web-ui.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/web-ui.md) · [vision-reactions.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/vision-reactions.md)
+## Docs
+
+| Doc | Contents |
+|-----|----------|
+| [docs/API.md](docs/API.md) | Every endpoint, auth, side effects, LLM backend selection, env vars |
+| [docs/JOBS.md](docs/JOBS.md) | Job queue design: states, types, leases, retries, routing |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: cold start, deploy, migrations, backup/restore, common failures |
+| [homelab: web-ui.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/web-ui.md) | Web UI service notes |
+| [homelab: vision-reactions.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/vision-reactions.md) | Reaction CNN service notes |
+
+## Related repos
+
+| Repo | Role |
+|------|------|
+| [homelab](https://github.com/zakiscoding/homelab) | Docs hub: architecture, nodes, services, setup log, runbooks |
+| [homelab-web](https://github.com/zakiscoding/homelab-web) | Next.js UI served by the `web` service here (:3081) |
+| [homelab-gpu](https://github.com/zakiscoding/homelab-gpu) | Windows GPU PC: Ollama, QLoRA worker, reaction CNN :8100, metrics push |
+| [gpu-systems-lab](https://github.com/zakiscoding/gpu-systems-lab) | Ubuntu GPU node: vLLM, k3s, DCGM observability, and the job router worker |
