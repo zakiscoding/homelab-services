@@ -239,7 +239,7 @@ async def chat(
                 mark_job_failed(UUID(job_id), str(e), error_class="transient")
             raise HTTPException(status_code=502, detail=str(e)) from e
         duration_ms = int((time.perf_counter() - started) * 1000)
-        log_chat(body.prompt, text, model_used, duration_ms)
+        log_chat(body.prompt, text, model_used, duration_ms, job_id)
         if job_id:
             mark_job_succeeded(UUID(job_id))
         if _redis:
