@@ -523,15 +523,19 @@ def get_system_status(gpu_url: str) -> dict[str, Any]:
                     "last_seen_at": seen.isoformat() if seen else None,
                 }
 
-    status["gpu"] = {"reachable": False, "ollama_up": False, "train_slot_free": True}
-    try:
-        import httpx
+    import llm
 
-        r = httpx.get(f"{gpu_url}/api/tags", timeout=5.0)
-        status["gpu"]["reachable"] = True
-        status["gpu"]["ollama_up"] = r.status_code == 200
-    except Exception:
-        pass
+    # gpu_url is the active LLM backend (Ollama on Windows, or vLLM on the Ubuntu boot).
+    # "ollama_up" is kept as the field name the web UI reads; it means "LLM backend up".
+    up = llm.ping()
+    status["gpu"] = {
+        "reachable": up,
+        "ollama_up": up,
+        "llm_backend": llm.active_backend(),
+        "llm_mode": llm.MODE,
+        "llm_url": gpu_url,
+        "train_slot_free": True,
+    }
     status["gpu"]["train_slot_free"] = (
         status["jobs"]["by_type"].get("train", {}).get("running", 0) == 0
     )

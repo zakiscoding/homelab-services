@@ -4,11 +4,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
 
-import httpx
 import psycopg
 import redis
 from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
+
+import llm
 
 from jobs import (
     claim_imac_job,
@@ -30,7 +31,6 @@ from train_plan import get_train_plan
 from rag_routes import router as rag_router
 from vision_routes import router as vision_router
 
-GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 API_KEY = os.environ.get("API_KEY", "")
@@ -158,16 +158,21 @@ def health() -> dict[str, str]:
 
 @app.get("/models")
 async def list_models(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
-    """Ollama tags on GPU — use homelab-* models after publish-lora-to-ollama."""
+    """Models on the LLM backend (Ollama tags, or vLLM served models).
+
+    With Ollama, homelab-* models (publish-lora-to-ollama) are preferred as the default.
+    """
     require_api_key(x_api_key)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(f"{GPU_URL}/api/tags")
-            r.raise_for_status()
-            data = r.json()
-        names = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        names = await llm.list_models()
         homelab = [n for n in names if n.startswith("homelab-")]
-        return {"models": names, "homelab_models": homelab, "default_chat_model": homelab[0] if homelab else "llama3.2:latest"}
+        if homelab:
+            default = homelab[0]
+        elif llm.default_model() in names or not names:
+            default = llm.default_model()
+        else:
+            default = names[0]
+        return {"models": names, "homelab_models": homelab, "default_chat_model": default, "backend": llm.active_backend(), "mode": llm.MODE}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
@@ -175,19 +180,16 @@ async def list_models(x_api_key: str | None = Header(default=None)) -> dict[str,
 @app.get("/health/gpu")
 async def health_gpu() -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{GPU_URL}/api/tags")
-            r.raise_for_status()
-            return {"gpu": "ok", "models": r.json()}
+        return {"gpu": "ok", "backend": llm.active_backend(), "mode": llm.MODE, "models": await llm.list_models()}
     except Exception as e:
-        return {"gpu": "down", "error": str(e)}
+        return {"gpu": "down", "backend": llm.active_backend(), "mode": llm.MODE, "error": str(e)}
 
 
 @app.get("/system/status")
 def system_status(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     require_api_key(x_api_key)
     try:
-        return get_system_status(GPU_URL)
+        return get_system_status(llm.backend_url())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -226,28 +228,19 @@ async def chat(
 
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            r = await client.post(
-                f"{GPU_URL}/api/generate",
-                json={
-                    "model": body.model,
-                    "prompt": body.prompt,
-                    "stream": False,
-                },
-            )
-            if r.status_code >= 400:
-                if job_id:
-                    mark_job_failed(UUID(job_id), r.text, error_class="transient")
-                raise HTTPException(status_code=502, detail=r.text)
-            data = r.json()
+        try:
+            text, model_used = await llm.generate(body.model, body.prompt)
+        except llm.LLMError as e:
+            if job_id:
+                mark_job_failed(UUID(job_id), str(e), error_class="transient")
+            raise HTTPException(status_code=502, detail=str(e)) from e
         duration_ms = int((time.perf_counter() - started) * 1000)
-        text = data.get("response", "")
-        log_chat(body.prompt, text, body.model, duration_ms)
+        log_chat(body.prompt, text, model_used, duration_ms)
         if job_id:
             mark_job_succeeded(UUID(job_id))
         if _redis:
             _redis.incr("homelab:requests:total")
-        return ChatResponse(model=body.model, response=text, duration_ms=duration_ms, job_id=job_id)
+        return ChatResponse(model=model_used, response=text, duration_ms=duration_ms, job_id=job_id)
     except HTTPException:
         raise
     except Exception as e:

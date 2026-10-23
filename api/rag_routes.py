@@ -9,10 +9,11 @@ import time
 from typing import Any
 from uuid import UUID
 
-import httpx
 import redis
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
+
+import llm
 
 from jobs import (
     create_embed_job,
@@ -31,7 +32,6 @@ from rag_store import (
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
-GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 API_KEY = os.environ.get("API_KEY", "")
 
@@ -178,19 +178,8 @@ async def rag_query(
     ]
 
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            r = await client.post(
-                f"{GPU_URL}/api/generate",
-                json={"model": body.model, "prompt": prompt, "stream": False},
-            )
-            if r.status_code >= 400:
-                if job_id:
-                    mark_job_failed(UUID(job_id), r.text, error_class="transient")
-                raise HTTPException(status_code=502, detail=r.text)
-            answer = r.json().get("response", "")
-    except HTTPException:
-        raise
-    except Exception as e:
+        answer, model_used = await llm.generate(body.model, prompt)
+    except Exception as e:  # llm.LLMError (upstream 4xx/5xx) or a connection error
         if job_id:
             mark_job_failed(UUID(job_id), str(e), error_class="transient")
         raise HTTPException(status_code=502, detail=str(e)) from e
@@ -203,7 +192,7 @@ async def rag_query(
         answer=answer,
         reason=None,
         citations=citations,
-        model=body.model,
+        model=model_used,
         duration_ms=duration_ms,
         job_id=job_id,
     )
