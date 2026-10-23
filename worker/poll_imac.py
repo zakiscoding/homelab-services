@@ -160,6 +160,24 @@ def _run_job(job_type: str, payload: dict) -> None:
         raise ValueError(f"unsupported job type: {job_type}")
 
 
+def _wait_for_api(client: httpx.Client, timeout_s: float = 180.0) -> None:
+    """Block until the API answers /health (backoff 1 s → 10 s), so a cold start of the stack,
+    where this container can come up before the API, doesn't crash the worker. Gives up and
+    raises after ``timeout_s``; Docker's restart policy then retries."""
+    deadline = time.monotonic() + timeout_s
+    delay = 1.0
+    while True:
+        try:
+            client.get(f"{API_BASE}/health", timeout=5.0).raise_for_status()
+            return
+        except httpx.HTTPError as e:
+            if time.monotonic() > deadline:
+                raise
+            print(f"[imac-worker] waiting for API ({e.__class__.__name__}); retry in {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 10.0)
+
+
 def main() -> None:
     """Entry point: reset stale jobs once, then loop claiming jobs (``--once`` for a single pass).
 
@@ -181,6 +199,7 @@ def main() -> None:
         f"[imac-worker] id={WORKER_ID} api={API_BASE} poll={POLL_INTERVAL}s notify={notify}"
     )
     with httpx.Client(timeout=120.0) as client:
+        _wait_for_api(client)
         reset_stale(client)
         while True:
             try:
