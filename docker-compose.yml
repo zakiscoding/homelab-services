@@ -125,7 +125,7 @@ services:
     user: "0"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in .env (scripts/bootstrap-env.sh does it)}
       # Provisioning lives under data/grafana/ (see scripts/sync-grafana-provisioning.sh)
       GF_PATHS_PROVISIONING: /var/lib/grafana/provisioning
     volumes:
