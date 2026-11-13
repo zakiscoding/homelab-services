@@ -3,9 +3,12 @@
 LLM_BACKEND=ollama  -> Ollama on GPU_URL (Windows boot of the GPU PC): /api/generate, /api/tags
 LLM_BACKEND=openai  -> vLLM (or any OpenAI-compatible server) on LLM_URL, e.g. the GPU PC's
                        Ubuntu boot: http://100.121.51.35:8000/v1 with LLM_API_KEY
-LLM_BACKEND=auto    -> vLLM when it answers, else Ollama. The GPU PC dual-boots (vLLM only on
-                       Ubuntu, Ollama only on Windows), so chat follows whichever OS is up.
-                       Re-checked at most every AUTO_RECHECK_S seconds.
+LLM_BACKEND=auto    -> vLLM when it answers, else Ollama. The GPU PC dual-boots, so chat follows
+                       whichever OS is up. Re-checked at most every AUTO_RECHECK_S seconds.
+
+Optional second vLLM: LLM_FALLBACK_URL / LLM_FALLBACK_API_KEY. In openai/auto mode the first of
+LLM_URL, LLM_FALLBACK_URL that answers is used. On the GPU PC's Windows boot, vLLM runs in WSL
+and zakar's Tailscale serves it at http://100.88.71.33:8000/v1 with its own key.
 
 With the openai backend, a requested model the server doesn't serve (e.g. the UI's
 "llama3.2:latest" default) falls back to LLM_DEFAULT_MODEL, and callers get the model name
@@ -23,6 +26,10 @@ AUTO_RECHECK_S = 30.0
 GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
 LLM_URL = os.environ.get("LLM_URL", "http://100.121.51.35:8000/v1").rstrip("/")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_FALLBACK_URL = os.environ.get("LLM_FALLBACK_URL", "").rstrip("/")
+LLM_FALLBACK_API_KEY = os.environ.get("LLM_FALLBACK_API_KEY", "")
+# (base_url, api_key) in preference order
+OPENAI_ENDPOINTS = [(LLM_URL, LLM_API_KEY)] + ([(LLM_FALLBACK_URL, LLM_FALLBACK_API_KEY)] if LLM_FALLBACK_URL else [])
 LLM_DEFAULT_MODEL = os.environ.get("LLM_DEFAULT_MODEL", "qwen2.5-1.5b-instruct")
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
 
@@ -33,15 +40,29 @@ class LLMError(Exception):
     """Upstream LLM failure; message is safe to return as an HTTP 502 detail."""
 
 
-_auto = {"checked_at": 0.0, "openai_up": False}
+_auto: dict[str, Any] = {"checked_at": 0.0, "endpoint": None}
 
 
-def _openai_up() -> bool:
-    """True if the OpenAI-compatible server answers GET /models with 200 within 2s."""
+def _answers(url: str, key: str) -> bool:
+    """True if an OpenAI-compatible server answers GET /models with 200 within 2s."""
     try:
-        return httpx.get(f"{LLM_URL}/models", headers=_headers(), timeout=2.0).status_code == 200
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        return httpx.get(f"{url}/models", headers=headers, timeout=2.0).status_code == 200
     except Exception:
         return False
+
+
+def _openai_endpoint() -> tuple[str, str] | None:
+    """First OPENAI_ENDPOINTS entry that answers, cached for AUTO_RECHECK_S seconds."""
+    if time.monotonic() - _auto["checked_at"] > AUTO_RECHECK_S:
+        _auto["endpoint"] = next((e for e in OPENAI_ENDPOINTS if _answers(*e)), None)
+        _auto["checked_at"] = time.monotonic()
+    return _auto["endpoint"]
+
+
+def _openai() -> tuple[str, str]:
+    """(url, key) to use for OpenAI-compatible calls; the primary when none answers."""
+    return _openai_endpoint() or OPENAI_ENDPOINTS[0]
 
 
 def is_openai() -> bool:
@@ -52,10 +73,7 @@ def is_openai() -> bool:
     """
     if MODE != "auto":
         return MODE == "openai"
-    if time.monotonic() - _auto["checked_at"] > AUTO_RECHECK_S:
-        _auto["openai_up"] = _openai_up()
-        _auto["checked_at"] = time.monotonic()
-    return _auto["openai_up"]
+    return _openai_endpoint() is not None
 
 
 def active_backend() -> str:
@@ -64,13 +82,14 @@ def active_backend() -> str:
 
 
 def backend_url() -> str:
-    """Base URL of the active backend (LLM_URL or GPU_URL)."""
-    return LLM_URL if is_openai() else GPU_URL
+    """Base URL of the active backend (the answering vLLM URL, or GPU_URL)."""
+    return _openai()[0] if is_openai() else GPU_URL
 
 
 def _headers() -> dict[str, str]:
-    """Bearer auth header for the OpenAI-compatible server when LLM_API_KEY is set."""
-    return {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+    """Bearer auth header for the active OpenAI-compatible server, if it has a key."""
+    key = _openai()[1]
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 async def list_models() -> list[str]:
@@ -80,7 +99,7 @@ async def list_models() -> list[str]:
     """
     async with httpx.AsyncClient(timeout=15.0) as client:
         if is_openai():
-            r = await client.get(f"{LLM_URL}/models", headers=_headers())
+            r = await client.get(f"{_openai()[0]}/models", headers=_headers())
             r.raise_for_status()
             return [m["id"] for m in r.json().get("data", []) if m.get("id")]
         r = await client.get(f"{GPU_URL}/api/tags")
@@ -110,7 +129,7 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
         served = await list_models()
         used = model if model in served else (LLM_DEFAULT_MODEL if LLM_DEFAULT_MODEL in served else served[0])
         r = await client.post(
-            f"{LLM_URL}/chat/completions",
+            f"{_openai()[0]}/chat/completions",
             headers=_headers(),
             json={
                 "model": used,
@@ -128,7 +147,7 @@ def ping(timeout: float = 5.0) -> bool:
     """Synchronous liveness check for /system/status."""
     try:
         if is_openai():
-            r = httpx.get(f"{LLM_URL}/models", headers=_headers(), timeout=timeout)
+            r = httpx.get(f"{_openai()[0]}/models", headers=_headers(), timeout=timeout)
         else:
             r = httpx.get(f"{GPU_URL}/api/tags", timeout=timeout)
         return r.status_code == 200
