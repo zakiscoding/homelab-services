@@ -1,0 +1,2 @@
+# Shell scripts run on the iMac (macOS bash) and in Linux containers: always LF.
+*.sh text eol=lf
