@@ -207,6 +207,58 @@ spent waiting for a password that turned out not to be needed.
   - Try vmnet again only with `--network-address` given explicitly, someone at the iMac, and a short
     timeout before rolling back.
 
+### The 10-connect limit: the actual cause (2026-11-14)
+
+After the outage, the web UI took 15 s per page and Prometheus couldn't scrape vLLM on the GPU PC
+(`context deadline exceeded`), though the iMac host got 200 from the same URL in 50 ms. Listing the
+sockets of the user-mode network process (`limactl usernet`, the host side of every outbound
+connection from the VM) showed the cause:
+
+```
+$ lsof -nP -a -p <limactl usernet pid> -iTCP -sTCP:SYN_SENT    # sampled every 3 s for 30 s
+syn_sent=10   3 100.121.51.35:22   4 100.121.51.35:8000   1 100.121.51.35:9090   2 100.88.71.33:2222
+```
+
+It held exactly 10 pending connects every time, all to addresses that never answer:
+
+- `100.121.51.35` is the GPU PC's Ubuntu boot. Tailscale has listed it offline for 17 days, because
+  the PC runs Windows.
+- `100.88.71.33:2222` is the planned SSH probe that Windows doesn't serve yet.
+
+Colima's user-mode network (gvisor-tap-vsock) allows at most 10 connects in flight, and it silently
+drops new SYNs beyond that. On the macOS host, a connect to an offline tailnet peer stays pending for
+over a minute. Probing the dead boot kept all 10 slots full:
+- Prometheus, every 15 s, scraping the dead boot's vLLM and federation targets
+- the blackbox SSH probes
+- the API's backend check, 3 attempts every 30 s
+
+Once the slots were full, connections to live hosts failed at random. That is the "dropped
+connections" this whole section measured. It also explains why `colima restart` didn't help: the
+same probes filled the slots again within a minute. A test from inside the API container fits it: connects to `100.88.71.33:8000` went `timeout(20 s), 1.05 s, 0.01 s, 0.01 s` while the
+slots were full, and `100.88.71.33:9090` (whose Prometheus connection stays open) never failed.
+
+The fix (commit b1675d8) doesn't restart anything for Prometheus:
+
+- **Prometheus** (hot reload): the Ubuntu-boot targets move to their own jobs, `vllm-ubuntu` and
+  `gpu-pc-federate-ubuntu`, which scrape every 2 min. A static `job` label keeps queries and alerts
+  on `job="vllm"` / `job="gpu-pc-federate"`. `blackbox-gpu-pc` also probes every 2 min, and
+  `GpuPcWslDown` waits 15 min anyway.
+- **API**: `refresh()` probes the endpoint that answered last first, so the offline boot is dialled
+  only when the working one stops answering. Tests:
+  `test_endpoint_that_answered_last_is_probed_first` and
+  `test_primary_is_probed_again_when_the_last_good_one_stops`.
+
+| After the Prometheus reload | Result |
+|---|---|
+| Prometheus `vllm` target `100.88.71.33:8000` | down → up, 53 ms scrape |
+| Web UI `:3081` from the laptop over the tailnet | 15.2 s, then 1.4 s, then 0.27 s |
+| Caddy `:80` from the laptop | 200 in 0.3–0.5 s (3/3) |
+| API `/health/gpu` from the laptop | `gpu: ok` on vLLM, 0.2–0.3 s (3/3; was 15 s and `down`) |
+| Pending connects, before the API restart | 3–6 of 10, all from the API's prober |
+
+Rule for anything new on the iMac's Colima: never poll an address that may be offline at a short
+interval from inside the VM. Each such poll holds a slot for over a minute.
+
 ## Operate
 
 ```bash
