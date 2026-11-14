@@ -1,0 +1,6 @@
+{
+  "slot_wal": {
+    "error": "Command '['docker', 'exec', 'pg-ha-lab-pg1-1', 'psql', '-U', 'app', '-d', 'homelab', '-Atq', '-c', 'checkpoint']' timed out after 30 seconds",
+    "wall_s": 70.7
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "baseline_async": {
+    "primary": "pg1",
+    "replication": [
+      {
+        "standby": "pg2",
+        "state": "streaming",
+        "sync": "async",
+        "replay_lag_ms": 45.383,
+        "bytes_behind": 1472
+      }
+    ],
+    "acked": 988,
+    "errors": 0,
+    "commit_ms": {
+      "p50": 1.337,
+      "p99": 85.081,
+      "max": 206.208
+    },
+    "present": 988,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "wall_s": 43.4
+  },
+  "baseline_sync": {
+    "primary": "pg1",
+    "replication": [
+      {
+        "standby": "pg2",
+        "state": "streaming",
+        "sync": "sync",
+        "replay_lag_ms": 0.875,
+        "bytes_behind": 0
+      }
+    ],
+    "acked": 749,
+    "errors": 0,
+    "commit_ms": {
+      "p50": 1.896,
+      "p99": 142.916,
+      "max": 317.656
+    },
+    "present": 749,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "wall_s": 44.5
+  },
+  "failover_async": {
+    "killed": "pg1",
+    "promoted": "pg2",
+    "t_kill": 1794628097.769089,
+    "detect_s": 6.325,
+    "promote_s": 1.763,
+    "acked": 961,
+    "errors": 35,
+    "commit_ms": {
+      "p50": 1.229,
+      "p99": 73.579,
+      "max": 193.15
+    },
+    "last_ack_before_fault_s": 0.091,
+    "first_ack_after_fault_s": 0.035,
+    "rto_s": 8.043,
+    "max_commit_ms": 193.15,
+    "reconnected_to": [
+      "pg2"
+    ],
+    "present": 961,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "rejoin": {
+      "method": "pg_rewind",
+      "rewind_and_restart_s": 11.69,
+      "streaming_after_s": 0.64
+    },
+    "wall_s": 61.3
+  },
+  "failover_sync": {
+    "killed": "pg2",
+    "promoted": "pg1",
+    "t_kill": 1794628158.833523,
+    "detect_s": 4.977,
+    "promote_s": 0.987,
+    "acked": 1168,
+    "errors": 34,
+    "commit_ms": {
+      "p50": 1.625,
+      "p99": 74.822,
+      "max": 568.409
+    },
+    "last_ack_before_fault_s": 0.07,
+    "first_ack_after_fault_s": 0.007,
+    "rto_s": 5.972,
+    "max_commit_ms": 568.409,
+    "reconnected_to": [
+      "pg1"
+    ],
+    "present": 1168,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "rejoin": {
+      "method": "pg_rewind",
+      "rewind_and_restart_s": 9.63,
+      "streaming_after_s": 1.26
+    },
+    "wall_s": 58.8
+  },
+  "partition_async": {
+    "primary": "pg1",
+    "standby_cut_s": 12.51,
+    "longest_write_stall_s": 2.278,
+    "streaming_again_after_s": 0.05,
+    "acked": 849,
+    "errors": 0,
+    "commit_ms": {
+      "p50": 1.402,
+      "p99": 109.134,
+      "max": 367.326
+    },
+    "present": 849,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "wall_s": 38.7
+  },
+  "partition_sync": {
+    "primary": "pg1",
+    "standby_cut_s": 10.56,
+    "longest_write_stall_s": 13.532,
+    "streaming_again_after_s": 0.04,
+    "acked": 767,
+    "errors": 0,
+    "commit_ms": {
+      "p50": 1.673,
+      "p99": 112.929,
+      "max": 13436.142
+    },
+    "present": 767,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "wall_s": 38.6
+  },
+  "slot_wal": {
+    "error": "docker-compose -p pg-ha-lab -f /Volumes/1tb drive/pg-ha-lab/ha-lab/postgres/compose.yml --profile standby up -d --no-deps --wait pg2 -> 1:  Volume pg-ha-lab_pg2 Creating \n Volume pg-ha-lab_pg2 Created \n Container pg-ha-lab-pg2-1 Creating \n Container pg-ha-lab-pg2-1 Created \n Container pg-ha-lab-pg2-1 Starting \n Container pg-ha-lab-pg2-1 Started \n Container pg-ha-lab-pg2-1 Waiting \ncontainer pg-ha-lab-pg2-1 is unhealthy\n",
+    "wall_s": 215.6
+  }
+}
