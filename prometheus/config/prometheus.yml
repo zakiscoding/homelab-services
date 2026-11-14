@@ -21,3 +21,40 @@ scrape_configs:
     honor_labels: true
     static_configs:
       - targets: ["pushgateway:9091"]
+
+  # --- Other homelab nodes, over the tailnet (each shared with `tailscale serve`) ---
+
+  # GPU PC: pull its local Prometheus (dcgm-exporter, node-exporter). Only one boot is up
+  # at a time, so one of these two targets is always down.
+  - job_name: gpu-pc-federate
+    honor_labels: true
+    metrics_path: /federate
+    params:
+      "match[]": ['{job=~"dcgm|node"}']
+    static_configs:
+      - targets: ["100.88.71.33:9090"]
+        labels: { node: gpu-pc, boot: windows }
+      - targets: ["100.121.51.35:9090"]
+        labels: { node: gpu-pc, boot: ubuntu }
+
+  - job_name: vllm
+    static_configs:
+      - targets: ["100.88.71.33:8000"]
+        labels: { node: gpu-pc, boot: windows }
+      - targets: ["100.121.51.35:8000"]
+        labels: { node: gpu-pc, boot: ubuntu }
+
+  # GopherGrid (github.com/zakiscoding/gophergrid, deploy/homelab)
+  - job_name: gophergrid-scheduler
+    static_configs:
+      - targets: ["100.91.113.98:8090"]
+        labels: { node: mos-imac, instance_name: scheduler-1 }
+      - targets: ["100.73.132.95:8091"]
+        labels: { node: hp-laptop, instance_name: scheduler-2 }
+
+  - job_name: gophergrid-worker
+    static_configs:
+      - targets: ["100.73.132.95:9101"]
+        labels: { node: hp-laptop, worker: hp-laptop }
+      - targets: ["100.88.71.33:9102"]
+        labels: { node: gpu-pc, worker: gpu-pc }
