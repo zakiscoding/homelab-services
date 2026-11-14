@@ -21,6 +21,8 @@ from typing import Any
 
 import httpx
 
+import tracing
+
 MODE = os.environ.get("LLM_BACKEND", "ollama").strip().lower()
 AUTO_RECHECK_S = 30.0
 GPU_URL = os.environ.get("GPU_URL", "http://100.88.71.33:11434")
@@ -122,6 +124,7 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
             r = await client.post(
                 f"{GPU_URL}/api/generate", json={"model": model, "prompt": prompt, "stream": False}
             )
+            tracing.annotate(**{"llm.backend": "ollama", "llm.model": model})
             if r.status_code >= 400:
                 raise LLMError(r.text)
             return r.json().get("response", ""), model
@@ -137,6 +140,7 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
                 "max_tokens": LLM_MAX_TOKENS,
             },
         )
+        tracing.annotate(**{"llm.backend": "vllm", "llm.endpoint": _openai()[0], "llm.model": used})
         if r.status_code >= 400:
             raise LLMError(r.text)
         data: dict[str, Any] = r.json()

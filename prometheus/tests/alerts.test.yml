@@ -1,0 +1,136 @@
+# promtool unit tests for the alert and SLO rules. Run from the repo root:
+#   docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts.test.yml
+rule_files:
+  - ../config/rules/alerts.yml
+  - ../config/rules/slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The 2026-11-04 outage, replayed: Windows up (SSH answers), WSL gone, so vLLM down.
+  - name: WSL down while Windows is up pages after 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-gpu-pc", node="gpu-pc", boot="windows"}'
+        values: '1x60'
+      - series: 'up{job="vllm", node="gpu-pc", boot="windows"}'
+        values: '1x4 0x55'   # vLLM healthy for 5 minutes, then gone
+    alert_rule_test:
+      - eval_time: 10m       # down 5 minutes: not yet
+        alertname: GpuPcWslDown
+        exp_alerts: []
+      - eval_time: 21m       # down 16 minutes: firing
+        alertname: GpuPcWslDown
+        exp_alerts:
+          - exp_labels: {severity: page, node: gpu-pc}
+            exp_annotations:
+              summary: "GPU PC is up in Windows but vLLM in WSL is unreachable"
+              description: >-
+                Windows answers on the tailnet but vLLM (WSL) has been down for 15 minutes, so chat
+                falls back to Ollama / Workers AI. Check `wsl -l -v` and the "WSL Keep Alive"
+                scheduled task on the GPU PC.
+
+  - name: PC switched off is not a WSL outage
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-gpu-pc", node="gpu-pc", boot="windows"}'
+        values: '0x60'
+      - series: 'up{job="vllm", node="gpu-pc", boot="windows"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: GpuPcWslDown
+        exp_alerts: []
+
+  - name: Ubuntu boot serving means Windows target is simply down
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-gpu-pc", node="gpu-pc", boot="windows"}'
+        values: '0x60'
+      - series: 'up{job="vllm", node="gpu-pc", boot="windows"}'
+        values: '0x60'
+      - series: 'up{job="vllm", node="gpu-pc", boot="ubuntu"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: GpuPcWslDown
+        exp_alerts: []
+
+  # The same outage seen by the synthetic SLO: the API fell back to Ollama, so the probe fails.
+  - name: Chat-on-GPU SLO pages within minutes of a full fallback
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-llm"}'
+        values: '1x60 0x70'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: SLOBurnRatePage
+        exp_alerts: []
+      - eval_time: 125m
+        alertname: SLOBurnRatePage
+        exp_alerts:
+          - exp_labels: {slo: chat-on-gpu, severity: page, burn: "14.4x over 1h/5m"}
+            exp_annotations:
+              summary: "SLO chat-on-gpu (95.0%): The API's LLM backend is vLLM on the GPU PC, not the Ollama fallback (probed every 15 s)"
+              description: "Error ratio is burning the 5.0% budget at 14.4x or more over both 1h and 5m."
+          - exp_labels: {slo: chat-on-gpu, severity: page, burn: "6x over 6h/30m"}
+            exp_annotations:
+              summary: "SLO chat-on-gpu (95.0%): The API's LLM backend is vLLM on the GPU PC, not the Ollama fallback (probed every 15 s)"
+              description: "Error ratio is burning the 5.0% budget at 6x or more over both 6h and 30m."
+
+  # 20% of /chat requests failing: fast burn on a 99% SLO.
+  - name: Chat API 5xx burst pages
+    interval: 1m
+    input_series:
+      - series: 'homelab_http_requests_total{job="homelab-api", endpoint="/chat", method="POST", status="200"}'
+        values: '0+8x130'
+      - series: 'homelab_http_requests_total{job="homelab-api", endpoint="/chat", method="POST", status="502"}'
+        values: '0x60 0+2x70'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: SLOBurnRatePage
+        exp_alerts: []
+      - eval_time: 125m
+        alertname: SLOBurnRatePage
+        exp_alerts:
+          - exp_labels: {slo: chat-api-availability, severity: page, burn: "14.4x over 1h/5m"}
+            exp_annotations:
+              summary: "SLO chat-api-availability (99.0%): Homelab API /chat answers without a 5xx"
+              description: "Error ratio is burning the 1.0% budget at 14.4x or more over both 1h and 5m."
+          - exp_labels: {slo: chat-api-availability, severity: page, burn: "6x over 6h/30m"}
+            exp_annotations:
+              summary: "SLO chat-api-availability (99.0%): Homelab API /chat answers without a 5xx"
+              description: "Error ratio is burning the 1.0% budget at 6x or more over both 6h and 30m."
+
+  # Gateway answering every chat from Workers AI (GPU unreachable): 200s, but off-GPU.
+  - name: Gateway chat on fallback burns the chat-on-gpu budget, not availability
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="vllm-gateway", span_kind="SPAN_KIND_SERVER", http_route="/v1/chat/completions", http_response_status_code="200", gateway_backend="gpu"}'
+        values: '0+5x30 150x90'
+      - series: 'traces_span_metrics_calls_total{service_name="vllm-gateway", span_kind="SPAN_KIND_SERVER", http_route="/v1/chat/completions", http_response_status_code="200", gateway_backend="workers-ai"}'
+        values: '0x30 0+5x90'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: SLOBurnRatePage
+        exp_alerts:
+          - exp_labels: {slo: gateway-chat-on-gpu, severity: page, burn: "14.4x over 1h/5m"}
+            exp_annotations:
+              summary: "SLO gateway-chat-on-gpu (95.0%): Gateway chat requests answered by the GPU, not the Workers AI fallback"
+              description: "Error ratio is burning the 5.0% budget at 14.4x or more over both 1h and 5m."
+          - exp_labels: {slo: gateway-chat-on-gpu, severity: page, burn: "6x over 6h/30m"}
+            exp_annotations:
+              summary: "SLO gateway-chat-on-gpu (95.0%): Gateway chat requests answered by the GPU, not the Workers AI fallback"
+              description: "Error ratio is burning the 5.0% budget at 6x or more over both 6h and 30m."
+
+  - name: Recording rule value for a probe SLI
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-llm"}'
+        values: '1 1 1 0 0'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{slo="chat-on-gpu"}
+        eval_time: 4m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate5m{slo="chat-on-gpu"}'
+            value: 0.4

@@ -2,6 +2,14 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -58,3 +66,46 @@ scrape_configs:
         labels: { node: hp-laptop, worker: hp-laptop }
       - targets: ["100.88.71.33:9102"]
         labels: { node: gpu-pc, worker: gpu-pc }
+
+  # --- Tracing and SLOs (observability/, docs/OBSERVABILITY-SLO.md) ---
+
+  # Span metrics from the OpenTelemetry Collector: the gateway's request and latency SLIs.
+  # honor_labels keeps job/service_name from the spans instead of "otel-collector".
+  - job_name: otel-collector-spanmetrics
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  - job_name: otel-collector
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  - job_name: blackbox-gateway
+    metrics_path: /probe
+    params: { module: [http_2xx] }
+    static_configs:
+      - targets: ["https://vllm-gateway.vllm-gateway.workers.dev/health"]
+    relabel_configs: &blackbox
+      - { source_labels: [__address__], target_label: __param_target }
+      - { source_labels: [__param_target], target_label: instance }
+      - { target_label: __address__, replacement: "blackbox:9115" }
+
+  # Synthetic "is chat on the GPU?": /health/gpu reports which LLM backend answers.
+  - job_name: blackbox-llm
+    metrics_path: /probe
+    params: { module: [http_llm_on_vllm] }
+    static_configs:
+      - targets: ["http://api:8000/health/gpu"]
+    relabel_configs: *blackbox
+
+  # Is each boot of the GPU PC up at all? (SSH on the tailnet.) Pairs with job="vllm" above.
+  - job_name: blackbox-gpu-pc
+    metrics_path: /probe
+    params: { module: [tcp_connect] }
+    static_configs:
+      - targets: ["100.88.71.33:22"]
+        labels: { node: gpu-pc, boot: windows }
+      - targets: ["100.121.51.35:22"]
+        labels: { node: gpu-pc, boot: ubuntu }
+    relabel_configs: *blackbox

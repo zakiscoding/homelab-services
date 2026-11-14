@@ -15,6 +15,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       API_KEY: ${API_KEY}
       WORKER_API_KEY: ${WORKER_API_KEY}
+      # Traces to the collector below; set OTEL_EXPORTER_OTLP_ENDPOINT= (empty) in .env to turn off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: homelab-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,6 +101,47 @@ services:
       - "9091:9091"
     networks:
       - backend
+
+  # --- Tracing, SLOs and alerting (docs/OBSERVABILITY-SLO.md) ---
+  # Config files are copied in by scripts/sync-observability.sh (Colima bind-mount quirk, as for
+  # Prometheus), so on a fresh host start these, run the script, and they restart with it.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      # Tailnet senders (vLLM on the GPU PC) reach these via `tailscale serve --tcp 4317/4318`.
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    depends_on: [tempo]
+    networks: [backend]
+
+  tempo:
+    image: grafana/tempo:2.10.10
+    restart: unless-stopped
+    user: "0"
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./data/tempo:/var/tempo
+    networks: [backend]
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./data/alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks: [backend]
+
+  blackbox:
+    image: prom/blackbox-exporter:v0.29.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    networks: [backend]
 
   prometheus:
     image: prom/prometheus:latest
