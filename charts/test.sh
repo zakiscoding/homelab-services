@@ -15,7 +15,7 @@ mount="$here"
 command -v cygpath >/dev/null 2>&1 && mount="$(cygpath -w "$here")"
 
 HELM_IMAGE=alpine/helm:4.3.2
-UNITTEST_IMAGE=helmunittest/helm-unittest:latest   # bundles helm 4.3 + helm-unittest 1.2.1
+UNITTEST_IMAGE=helmunittest/helm-unittest:4.3.0-1.2.1   # helm 4.3.0 + helm-unittest 1.2.1
 KUBECONFORM_IMAGE=ghcr.io/yannh/kubeconform:v0.8.0
 K8S_VERSION=1.36.6
 
