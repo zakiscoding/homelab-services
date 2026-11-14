@@ -63,6 +63,13 @@ service:
   telemetry:
     metrics:
       level: basic
+      # Since v0.123 the default is localhost:8888, which Prometheus in another container can't reach.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   pipelines:
     traces:
       receivers: [otlp]

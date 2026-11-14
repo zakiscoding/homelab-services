@@ -137,11 +137,15 @@ services:
       - "127.0.0.1:9093:9093"
     networks: [backend]
 
+  # Host networking on purpose: on this Colima VM, outbound connections from containers behind
+  # Docker's bridge NAT time out intermittently (about 2 in 3 to tailnet hosts and the public
+  # gateway, measured 2026-11-14) while the VM itself connects reliably. Probes must not inherit
+  # that, or they'd page about the network path instead of the target. See docs/OBSERVABILITY-SLO.md.
   blackbox:
     image: prom/blackbox-exporter:v0.29.1
     restart: unless-stopped
-    command: ["--config.file=/etc/blackbox/blackbox.yml"]
-    networks: [backend]
+    network_mode: host
+    command: ["--config.file=/etc/blackbox/blackbox.yml", "--web.listen-address=:9115"]
 
   prometheus:
     image: prom/prometheus:latest
@@ -151,6 +155,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # blackbox exporter on the VM's host network
     volumes:
       # Config injected via scripts/sync-prometheus-config.sh (Colima bind-mount quirk)
       - ./data/prometheus:/prometheus

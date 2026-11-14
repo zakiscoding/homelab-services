@@ -89,14 +89,14 @@ scrape_configs:
     relabel_configs: &blackbox
       - { source_labels: [__address__], target_label: __param_target }
       - { source_labels: [__param_target], target_label: instance }
-      - { target_label: __address__, replacement: "blackbox:9115" }
+      - { target_label: __address__, replacement: "host.docker.internal:9115" }
 
   # Synthetic "is chat on the GPU?": /health/gpu reports which LLM backend answers.
   - job_name: blackbox-llm
     metrics_path: /probe
     params: { module: [http_llm_on_vllm] }
     static_configs:
-      - targets: ["http://api:8000/health/gpu"]
+      - targets: ["http://127.0.0.1:8000/health/gpu"]  # api's published port, from the host network
     relabel_configs: *blackbox
 
   # Is each boot of the GPU PC up at all? (SSH on the tailnet.) Pairs with job="vllm" above.
