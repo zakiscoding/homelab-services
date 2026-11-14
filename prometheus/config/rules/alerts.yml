@@ -33,11 +33,22 @@ groups:
     rules:
       - alert: GatewayHealthDown
         expr: probe_success{job="blackbox-gateway"} == 0
-        for: 5m
+        for: 10m  # longer than MonitoringEgressDegraded takes to fire, so it can be inhibited
         labels: {severity: page}
         annotations:
           summary: "Public gateway /health is failing"
           description: "The Cloudflare Worker itself is not answering /health from the iMac."
+
+      # The iMac can't reliably reach the internet itself, so its probes say nothing about targets.
+      - alert: MonitoringEgressDegraded
+        expr: avg_over_time(probe_success{job="blackbox-control"}[5m]) < 0.9
+        for: 2m
+        labels: {severity: ticket}
+        annotations:
+          summary: "The iMac's probes can't reach a control site reliably; probe alerts are suppressed"
+          description: >-
+            Under 90% of probes to the control URL succeeded over 5 minutes. Gateway health pages are
+            inhibited until this clears. Check Colima networking (docs/OBSERVABILITY-SLO.md).
 
       # Without the collector, the gateway SLOs go quiet instead of firing, so watch it directly.
       - alert: TraceIntakeDown

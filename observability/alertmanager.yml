@@ -19,6 +19,9 @@ route:
       repeat_interval: 4h
 
 inhibit_rules:
+  # A failing control probe means the probing host is the problem, not the gateway.
+  - source_matchers: [alertname="MonitoringEgressDegraded"]
+    target_matchers: [alertname="GatewayHealthDown"]
   # One root cause, one page: when WSL is down, the chat-on-GPU SLO burning is a consequence.
   - source_matchers: [alertname="GpuPcWslDown"]
     target_matchers: [slo=~"chat-on-gpu|gateway-chat-on-gpu"]

@@ -91,6 +91,15 @@ scrape_configs:
       - { source_labels: [__param_target], target_label: instance }
       - { target_label: __address__, replacement: "host.docker.internal:9115" }
 
+  # Control probe: a well-known site. When this fails too, the problem is the iMac's own egress,
+  # not the target, and Alertmanager suppresses the target alerts (see MonitoringEgressDegraded).
+  - job_name: blackbox-control
+    metrics_path: /probe
+    params: { module: [http_2xx] }
+    static_configs:
+      - targets: ["https://www.cloudflare.com/cdn-cgi/trace"]
+    relabel_configs: *blackbox
+
   # Synthetic "is chat on the GPU?": /health/gpu reports which LLM backend answers.
   - job_name: blackbox-llm
     scrape_interval: 60s

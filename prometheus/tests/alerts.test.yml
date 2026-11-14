@@ -134,3 +134,44 @@ tests:
         exp_samples:
           - labels: 'slo:sli_error:ratio_rate5m{slo="chat-on-gpu"}'
             value: 0.4
+
+  - name: Control probe failing raises the egress ticket
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-control"}'
+        values: '1x10 0 1 0 0 1 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: MonitoringEgressDegraded
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: MonitoringEgressDegraded
+        exp_alerts:
+          - exp_labels: {severity: ticket, job: blackbox-control}
+            exp_annotations:
+              summary: "The iMac's probes can't reach a control site reliably; probe alerts are suppressed"
+              description: >-
+                Under 90% of probes to the control URL succeeded over 5 minutes. Gateway health pages are
+                inhibited until this clears. Check Colima networking (docs/OBSERVABILITY-SLO.md).
+
+  # The ordering that makes the inhibition work: egress ticket before the gateway page.
+  - name: Egress ticket fires before a gateway page could
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-control"}'
+        values: '1x5 0x30'
+      - series: 'probe_success{job="blackbox-gateway"}'
+        values: '1x5 0x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: GatewayHealthDown
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: MonitoringEgressDegraded
+        exp_alerts:
+          - exp_labels: {severity: ticket, job: blackbox-control}
+            exp_annotations:
+              summary: "The iMac's probes can't reach a control site reliably; probe alerts are suppressed"
+              description: >-
+                Under 90% of probes to the control URL succeeded over 5 minutes. Gateway health pages are
+                inhibited until this clears. Check Colima networking (docs/OBSERVABILITY-SLO.md).
