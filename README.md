@@ -4,7 +4,7 @@
 
 **The iMac control plane: API gateway, Postgres job queue, RAG, web UI hosting and monitoring for the homelab, run with Docker Compose on Colima.**
 
-![host](https://img.shields.io/badge/host-iMac%20M1-555555?style=flat-square&logo=apple&logoColor=white) ![runtime](https://img.shields.io/badge/runtime-Colima%20%2B%20Compose-2496ed?style=flat-square&logo=docker&logoColor=white) ![API](https://img.shields.io/badge/API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white) ![state](https://img.shields.io/badge/state-Postgres%2016-4169e1?style=flat-square&logo=postgresql&logoColor=white) ![RAG](https://img.shields.io/badge/RAG-Qdrant-dc244c?style=flat-square)
+[![CI](https://github.com/zakiscoding/homelab-services/actions/workflows/ci.yml/badge.svg)](https://github.com/zakiscoding/homelab-services/actions/workflows/ci.yml) ![host](https://img.shields.io/badge/host-iMac%20M1-555555?style=flat-square&logo=apple&logoColor=white) ![runtime](https://img.shields.io/badge/runtime-Colima%20%2B%20Compose-2496ed?style=flat-square&logo=docker&logoColor=white) ![API](https://img.shields.io/badge/API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white) ![state](https://img.shields.io/badge/state-Postgres%2016-4169e1?style=flat-square&logo=postgresql&logoColor=white) ![RAG](https://img.shields.io/badge/RAG-Qdrant-dc244c?style=flat-square)
 
 [homelab](https://github.com/zakiscoding/homelab) (docs hub) · **homelab-services** · [homelab-web](https://github.com/zakiscoding/homelab-web) · [homelab-gpu](https://github.com/zakiscoding/homelab-gpu) · [gpu-systems-lab](https://github.com/zakiscoding/gpu-systems-lab)
 
