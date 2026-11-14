@@ -21,7 +21,9 @@ put() { # service, source, target-dir, target-name
   local c stage; c=$(cid "$1")
   [[ -n "$c" ]] || { echo "$1 is not running; start it first" >&2; exit 1; }
   stage=$(mktemp -d); mkdir -p "$stage/$(basename "$3")"
-  cp "$2" "$stage/$(basename "$3")/$4"; chmod -R go-rwx "$stage"
+  cp "$2" "$stage/$(basename "$3")/$4"
+  # Images run as non-root users (collector uid 10001, alertmanager nobody), which must read these.
+  chmod 755 "$stage/$(basename "$3")"; chmod 644 "$stage/$(basename "$3")/$4"
   docker cp "$stage/$(basename "$3")" "$c:$(dirname "$3")/"
   rm -rf "$stage"
 }
