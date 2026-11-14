@@ -183,6 +183,9 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
                     f"{GPU_URL}/api/generate", json={"model": model, "prompt": prompt, "stream": False},
                     timeout=OLLAMA_TIMEOUT,
                 )
+            except httpx.ConnectTimeout as e:
+                tracing.annotate(**{"llm.backend": "ollama", "llm.model": model})
+                raise LLMError(f"Ollama unreachable: no connection within {OLLAMA_TIMEOUT.connect:.0f} s") from e
             except httpx.TimeoutException as e:
                 tracing.annotate(**{"llm.backend": "ollama", "llm.model": model})
                 raise LLMError(f"Ollama did not answer within {OLLAMA_TIMEOUT.read:.0f} s") from e
