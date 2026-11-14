@@ -1,33 +1,33 @@
 # Symptom alerts that SLO burn rates can't express. Runbooks: docs/OPERATIONS.md#alerts
 groups:
+  # Since 2026-11-14 the GPU PC runs WSL (vLLM, GopherGrid workers, its Prometheus) only for work
+  # sessions and the 03:30 nightly benchmark, so "WSL down" and "vLLM down" are normal and no longer
+  # alert. What has to keep working is the nightly run: it starts WSL, benchmarks the GPU through
+  # GopherGrid, pushes the result to this Pushgateway, and shuts WSL down again. These two alerts
+  # replace GpuPcWslDown and GpuPcLlmOffline. Runbook: gpu-systems-lab regress/README.md.
   - name: gpu-pc
     rules:
-      # The 2026-11-04 outage: Windows was up (its SSH answered over the tailnet) while WSL, and
-      # with it vLLM, its Prometheus and the tunnel, had stopped. Nothing alerted for 9 days.
-      # Requiring the Windows host to be up separates this from "the PC is off" or "it is in
-      # the Ubuntu boot", which are normal.
-      - alert: GpuPcWslDown
-        expr: |
-          max by (node) (probe_success{job="blackbox-gpu-pc", boot="windows"}) == 1
-          unless on (node)
-          max by (node) (up{job="vllm", boot="windows"}) == 1
-        for: 15m
-        labels: {severity: page}
-        annotations:
-          summary: "GPU PC is up in Windows but vLLM in WSL is unreachable"
-          description: >-
-            Windows answers on the tailnet but vLLM (WSL) has been down for 15 minutes, so chat
-            falls back to Ollama / Workers AI. Check `wsl -l -v` and the "WSL Keep Alive"
-            scheduled task on the GPU PC.
-
-      # Neither boot is serving vLLM for half a day. Often deliberate (the PC is off), so a ticket.
-      - alert: GpuPcLlmOffline
-        expr: max(up{job="vllm"}) == 0 or absent(up{job="vllm"})
-        for: 12h
+      - alert: GpuNightlyRegression
+        expr: max by (precision) (gg_nightly_regression{job="gg_nightly", run=""}) == 1
         labels: {severity: ticket}
         annotations:
-          summary: "No vLLM on either boot of the GPU PC for 12 hours"
-          description: "Chat has been on a fallback model for 12 hours. Intended if the PC is off."
+          summary: "Nightly GPU matmul {{ $labels.precision }} is more than 5% below its 7-run median"
+          description: "The GPU PC got slower. Compare gg_nightly_tflops with gg_nightly_baseline_tflops."
+
+      # No push for 2 days covers the PC being off, the Windows task not running, and WSL failing
+      # to start; job_ok == 0 covers a run that started but failed.
+      - alert: GpuNightlyJobMissing
+        expr: |
+          time() - max(gg_nightly_last_run_timestamp_seconds{job="gg_nightly", run=""}) > 2 * 86400
+          or max(gg_nightly_job_ok{job="gg_nightly", run=""}) == 0
+          or absent(gg_nightly_last_run_timestamp_seconds{job="gg_nightly", run=""})
+        for: 30m
+        labels: {severity: ticket}
+        annotations:
+          summary: "The nightly GPU benchmark failed or hasn't reported for 2 days"
+          description: >-
+            Check the "GPU Nightly Benchmark" task and %LOCALAPPDATA%\gpu-nightly.log on the GPU PC,
+            or run scripts/gpu-pc-up.sh --check from the laptop.
 
   - name: edge-and-pipeline
     rules:

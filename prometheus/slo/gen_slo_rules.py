@@ -54,22 +54,8 @@ SLOS = [
         "error": f'sum(rate(traces_span_metrics_calls_total{{{GATEWAY},http_response_status_code=~"5.."}}[{{w}}]))',
         "total": f"sum(rate(traces_span_metrics_calls_total{{{GATEWAY}}}[{{w}}]))",
     },
-    {
-        "slo": "gateway-chat-on-gpu",
-        "target": 0.95,
-        "summary": "Gateway chat requests answered by the GPU, not the Workers AI fallback",
-        "error": (f'sum(rate(traces_span_metrics_calls_total{{{GATEWAY},http_route="/v1/chat/completions",'
-                  f'http_response_status_code!~"4..",gateway_backend!="gpu"}}[{{w}}]))'),
-        "total": (f'sum(rate(traces_span_metrics_calls_total{{{GATEWAY},http_route="/v1/chat/completions",'
-                  f'http_response_status_code!~"4.."}}[{{w}}]))'),
-    },
-    {
-        # Synthetic: works with zero user traffic, which is most of the time in a homelab.
-        "slo": "chat-on-gpu",
-        "target": 0.95,
-        "summary": "The API's LLM backend is vLLM on the GPU PC, not the Ollama fallback (probed every 15 s)",
-        "probe": 'probe_success{job="blackbox-llm"}',
-    },
+    # gateway-chat-on-gpu and chat-on-gpu were removed on 2026-11-14: GPU serving is on demand,
+    # so chat on the Workers AI / Ollama fallback is the normal state, not an error.
 ]
 
 

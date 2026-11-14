@@ -54,24 +54,26 @@ together (Google SRE Workbook ch. 5): **page** at 14.4x over 1 h and 5 m, **page
 | `chat-api-availability` | 99% | `/chat` responses with a 5xx |
 | `chat-api-latency` | 95% | `/chat` responses slower than 15 s |
 | `gateway-availability` | 99.5% | gateway server spans with a 5xx (from the Worker's own spans) |
-| `gateway-chat-on-gpu` | 95% | gateway chat requests not answered by the GPU (Workers AI fallback) |
-| `chat-on-gpu` | 95% | synthetic: probes of the API's `/health/gpu` where the backend isn't vLLM. Works with no user traffic |
 
-The last two exist because the homelab degrades gracefully: during the November outage every chat
-still got an answer, from a fallback model, so availability SLOs alone would have stayed green.
+Two more SLOs, `gateway-chat-on-gpu` and `chat-on-gpu` (95% of chat answered by vLLM on the GPU PC), were
+removed on 2026-11-14. The GPU PC now runs WSL only for work sessions and the nightly benchmark, so chat on
+the Workers AI / Ollama fallback is the normal state rather than an error. They caught the November outage,
+when every chat still got an answer from a fallback model and the availability SLOs stayed green. If GPU
+serving goes back to always-on, restore them from git history.
 
 ## Alerts
 
 | Alert | Severity | Fires when |
 |---|---|---|
 | `SLOBurnRatePage` / `SLOBurnRateTicket` | page / ticket | an SLO burns its budget too fast (labels: `slo`, `burn`) |
-| `GpuPcWslDown` | page | Windows boot reachable but vLLM on it down for 15 min: the November outage |
-| `GpuPcLlmOffline` | ticket | no vLLM on either boot for 12 h (often intended: PC off) |
+| `GpuNightlyRegression` | ticket | the GPU PC's nightly matmul benchmark is more than 5% below its 7-run median |
+| `GpuNightlyJobMissing` | ticket | the nightly benchmark failed, or hasn't pushed a result to the Pushgateway for 2 days |
 | `GatewayHealthDown` | page | public `/health` failing for 10 min |
 | `MonitoringEgressDegraded` | ticket | the iMac's control probe fails; inhibits `GatewayHealthDown` |
 | `TraceIntakeDown` | ticket | the collector is down, so gateway SLIs go quiet |
 
-Inhibition: `GpuPcWslDown` suppresses the two chat-on-GPU SLO alerts (one cause, one page).
+`GpuPcWslDown` and `GpuPcLlmOffline` were removed with the GPU SLOs on 2026-11-14: WSL and vLLM being down is now
+normal. The nightly alerts read the Pushgateway, which keeps the last result after WSL shuts down.
 
 ## Results (2026-11-14)
 
