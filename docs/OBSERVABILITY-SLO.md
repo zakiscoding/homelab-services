@@ -185,6 +185,28 @@ The problem is the user-mode network itself, or how it interacts with Tailscale 
 candidate is step 3, vmnet networking (`socket_vmnet`, `network.address: true`). That needs `sudo`
 on the iMac and about 10 min of downtime.
 
+**Step 3 attempt (2026-11-14): vmnet. Not applied; it caused an outage.** Colima was stopped at 05:28
+UTC for the switch.
+
+1. `colima start --network-preferred-route` didn't ask for a password. It saved
+   `preferredRoute: true` but left `address: false` and no new network, and the VM hung at boot.
+2. After a force-stop, every later boot froze the same way, after about 5 s of VM CPU and before the
+   kernel printed anything. That included the restored original config and a 4 GiB memory limit.
+3. A macOS restart of the iMac cleared it, and Colima then booted normally in 272 s. That points at the
+   macOS virtualization layer, left wedged by the aborted start, rather than the VM's disk or config.
+
+The homelab's iMac services were down from 05:28 to 14:38 UTC, about 9 hours. Much of that time was
+spent waiting for a password that turned out not to be needed.
+
+- **Now:** the original network config, with the VM at 4 GiB instead of 6 (the iMac has 8 GiB and was
+  swapping). All 19 containers are back. GopherGrid failed over to its GPU PC scheduler.
+- **Lessons:**
+  - Docker in Colima doesn't restart `unless-stopped` containers after `colima start`; they need
+    `docker start`.
+  - Don't interrupt a hung `colima start`. Stop the iMac's VM only with a plan for a macOS restart.
+  - Try vmnet again only with `--network-address` given explicitly, someone at the iMac, and a short
+    timeout before rolling back.
+
 ## Operate
 
 ```bash
