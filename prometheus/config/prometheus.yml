@@ -49,12 +49,12 @@ scrape_configs:
     static_configs:
       - targets: ["100.91.113.98:8090"]
         labels: { node: mos-imac, instance_name: scheduler-1 }
-      - targets: ["100.73.132.95:8091"]
-        labels: { node: hp-laptop, instance_name: scheduler-2 }
+      - targets: ["100.88.71.33:8091"]
+        labels: { node: gpu-pc, instance_name: scheduler-2 }
 
   - job_name: gophergrid-worker
     static_configs:
-      - targets: ["100.73.132.95:9101"]
-        labels: { node: hp-laptop, worker: hp-laptop }
+      - targets: ["100.88.71.33:9103"]
+        labels: { node: gpu-pc, worker: gpu-pc-cpu }
       - targets: ["100.88.71.33:9102"]
         labels: { node: gpu-pc, worker: gpu-pc }
