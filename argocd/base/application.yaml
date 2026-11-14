@@ -1,0 +1,44 @@
+# The homelab stack as one Argo CD Application: charts/homelab on main, auto-synced.
+#
+# Order inside a sync comes from argocd.argoproj.io/sync-wave annotations in the chart
+# (values.yaml syncWaves): ConfigMaps -3, postgres/redis -2, qdrant/pushgateway -1, api 0,
+# worker/web/mlflow/prometheus 1, grafana 2, ingress 3. Argo waits for each wave to be
+# Healthy before applying the next.
+#
+# Prerequisite: the Secret named by secrets.existingSecret (default homelab-secrets) exists in
+# the homelab namespace. It is never stored in git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: homelab
+  namespace: argocd
+  # Deleting the Application also deletes what it deployed (PVCs from StatefulSets and the
+  # Prune=false PVCs stay).
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: homelab
+  source:
+    repoURL: https://github.com/zakiscoding/homelab-services.git
+    targetRevision: main
+    path: charts/homelab
+    helm:
+      releaseName: homelab
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: homelab
+  syncPolicy:
+    automated:
+      prune: true      # delete resources removed from git
+      selfHeal: true   # revert changes made in the cluster
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

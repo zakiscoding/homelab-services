@@ -1,0 +1,35 @@
+# AppProject: what the homelab Application may deploy, and where.
+# Least privilege: one source repo, one destination namespace, and the only cluster-scoped
+# kind it may create is that Namespace (CreateNamespace=true).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: homelab
+  namespace: argocd
+  # Don't delete the project while Applications still use it
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: homelab-services stack (charts/homelab)
+  sourceRepos:
+    - https://github.com/zakiscoding/homelab-services
+    - https://github.com/zakiscoding/homelab-services.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: homelab
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  # Every kind the chart renders. Anything else (Roles, Secrets, ...) is refused.
+  namespaceResourceWhitelist:
+    - { group: "", kind: ConfigMap }
+    - { group: "", kind: Service }
+    - { group: "", kind: PersistentVolumeClaim }
+    - { group: apps, kind: Deployment }
+    - { group: apps, kind: StatefulSet }
+    - { group: networking.k8s.io, kind: Ingress }
+  orphanedResources:
+    warn: true
+    ignore:
+      # Created out of band (kubectl create secret ... --from-env-file=.env), never in git
+      - { group: "", kind: Secret, name: homelab-secrets }
