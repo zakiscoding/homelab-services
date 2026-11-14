@@ -130,3 +130,18 @@ def test_dead_ollama_fails_fast_with_llm_error(monkeypatch):
         asyncio.run(llm.generate("llama3.2:latest", "hi"))
     assert time.monotonic() - started < 5
     server.close()
+
+
+def test_chat_reuses_the_model_list(monkeypatch):
+    """One connection per chat instead of two: /models is fetched once per TTL."""
+    calls = []
+
+    async def fake_list_models():
+        calls.append(1)
+        return ["qwen2.5-1.5b-instruct"]
+
+    monkeypatch.setattr(llm, "_served", {})
+    monkeypatch.setattr(llm, "list_models", fake_list_models)
+    for _ in range(3):
+        assert asyncio.run(llm._served_models("http://wsl.test:8000/v1")) == ["qwen2.5-1.5b-instruct"]
+    assert len(calls) == 1

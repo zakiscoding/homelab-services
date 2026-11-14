@@ -190,6 +190,22 @@ async def list_models() -> list[str]:
         return [m.get("name", "") for m in r.json().get("models", []) if m.get("name")]
 
 
+_served: dict[str, tuple[float, list[str]]] = {}
+SERVED_TTL_S = 300.0
+
+
+async def _served_models(url: str) -> list[str]:
+    """vLLM's model list, cached per endpoint for SERVED_TTL_S. Saves one connection per chat,
+    which matters on a network that drops some of them; a stale list only affects which name
+    the request asks for, and vLLM rejects an unknown one with a clear error."""
+    cached = _served.get(url)
+    if cached and time.monotonic() - cached[0] < SERVED_TTL_S:
+        return cached[1]
+    models = await list_models()
+    _served[url] = (time.monotonic(), models)
+    return models
+
+
 def default_model() -> str:
     """Default chat model for the active backend (LLM_DEFAULT_MODEL or llama3.2:latest)."""
     return LLM_DEFAULT_MODEL if is_openai() else OLLAMA_DEFAULT_MODEL
@@ -218,7 +234,7 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
                 raise LLMError(r.text)
             return r.json().get("response", ""), model
 
-        served = await list_models()
+        served = await _served_models(_openai()[0])
         used = model if model in served else (LLM_DEFAULT_MODEL if LLM_DEFAULT_MODEL in served else served[0])
         r = await client.post(
             f"{_openai()[0]}/chat/completions",
