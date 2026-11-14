@@ -53,7 +53,7 @@ class LLMError(Exception):
     """Upstream LLM failure; message is safe to return as an HTTP 502 detail."""
 
 
-_auto: dict[str, Any] = {"checked_at": 0.0, "endpoint": None, "misses": 0}
+_auto: dict[str, Any] = {"checked_at": 0.0, "endpoint": None, "misses": 0, "last_good": None}
 _lock = threading.Lock()
 _prober: threading.Thread | None = None
 
@@ -75,20 +75,44 @@ def _answers(url: str, key: str) -> bool:
     return False
 
 
+def _ollama_answers() -> bool:
+    """True if Ollama answers GET /api/tags (same retry rule as _answers)."""
+    for _ in range(PROBE_ATTEMPTS):
+        try:
+            return httpx.get(f"{GPU_URL}/api/tags", timeout=PROBE_TIMEOUT_S).status_code == 200
+        except httpx.TransportError:
+            continue
+        except Exception:
+            return False
+    return False
+
+
 def refresh() -> tuple[str, str] | None:
     """Re-check the endpoints and update the cached choice. Returns the endpoint now in use.
 
-    Hysteresis: if the current endpoint stops answering but did on the previous check, keep it
-    for one more round. A single bad check no longer switches chat to Ollama.
+    - Hysteresis: if the current endpoint stops answering but did on the previous check, keep it
+      for one more round, so a single bad check doesn't switch chat to Ollama.
+    - Only fall back to Ollama if Ollama itself answers. When neither answers (as when the
+      network drops connections for a minute or two), stay on the last vLLM that worked: chat
+      requests there have long timeouts and usually get through a slow connect, while a dead
+      Ollama can only fail.
     """
     found = next((e for e in OPENAI_ENDPOINTS if _answers(*e)), None)
     with _lock:
         current = _auto["endpoint"]
-        if found is None and current is not None and _auto["misses"] < 1:
+        if found is not None:
+            _auto["endpoint"], _auto["last_good"], _auto["misses"] = found, found, 0
+        elif current is not None and _auto["misses"] < 1:
             _auto["misses"] += 1
         else:
-            _auto["endpoint"] = found
             _auto["misses"] = 0
+            _auto["endpoint"] = None
+        last_good = _auto["last_good"]
+    if found is None and _auto["endpoint"] is None and last_good is not None and MODE == "auto":
+        if not _ollama_answers():
+            with _lock:
+                _auto["endpoint"] = last_good
+    with _lock:
         _auto["checked_at"] = time.monotonic()
         return _auto["endpoint"]
 

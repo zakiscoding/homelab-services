@@ -28,7 +28,7 @@ class Script:
     def __call__(self, url, headers=None, timeout=None):
         host = url.split("//")[1].split(".")[0]
         self.calls.append(host)
-        outcome = self.plans[host].pop(0) if self.plans[host] else "drop"
+        outcome = self.plans[host].pop(0) if self.plans.get(host) else "drop"
         if outcome == "drop":
             raise httpx.ConnectTimeout("dropped")
         return httpx.Response(200 if outcome == "ok" else outcome)
@@ -39,7 +39,8 @@ def fresh(monkeypatch):
     monkeypatch.setattr(llm, "OPENAI_ENDPOINTS", [PRIMARY, FALLBACK])
     monkeypatch.setattr(llm, "PROBE_ATTEMPTS", 3)
     monkeypatch.setattr(llm, "_ensure_prober", lambda: None)  # no background thread in tests
-    monkeypatch.setattr(llm, "_auto", {"checked_at": 0.0, "endpoint": None, "misses": 0})
+    monkeypatch.setattr(llm, "_auto", {"checked_at": 0.0, "endpoint": None, "misses": 0, "last_good": None})
+    monkeypatch.setattr(llm, "GPU_URL", "http://ollama.test:11434")
     monkeypatch.setattr(llm, "MODE", "auto")
 
 
@@ -73,20 +74,34 @@ def test_offline_primary_falls_through_to_the_fallback(monkeypatch):
 def test_one_bad_check_does_not_switch_to_ollama(monkeypatch):
     monkeypatch.setattr(llm.httpx, "get", Script(wsl=["ok"]))
     assert llm.refresh() == FALLBACK
-    monkeypatch.setattr(llm.httpx, "get", Script())  # everything drops
+    monkeypatch.setattr(llm.httpx, "get", Script(ollama=["ok"] * 5))  # vLLM drops, Ollama fine
     assert llm.refresh() == FALLBACK  # kept for one round
-    assert llm.refresh() is None      # second miss in a row: really down
+    assert llm.refresh() is None      # second miss in a row: really down, and Ollama answers
     assert llm.active_backend() == "ollama"
+
+
+def test_stays_on_vllm_when_ollama_is_dead_too(monkeypatch):
+    monkeypatch.setattr(llm.httpx, "get", Script(wsl=["ok"]))
+    assert llm.refresh() == FALLBACK
+    monkeypatch.setattr(llm.httpx, "get", Script())  # everything drops, Ollama included
+    llm.refresh()
+    assert llm.refresh() == FALLBACK  # no point switching to a fallback that can't answer
+    assert llm.active_backend() == "openai"
+
+
+def test_never_seen_vllm_and_dead_ollama_means_ollama(monkeypatch):
+    monkeypatch.setattr(llm.httpx, "get", Script())
+    assert llm.refresh() is None  # nothing has ever worked: no vLLM to stay on
 
 
 def test_recovery_resets_the_miss_count(monkeypatch):
     monkeypatch.setattr(llm.httpx, "get", Script(wsl=["ok"]))
     llm.refresh()
-    monkeypatch.setattr(llm.httpx, "get", Script())
+    monkeypatch.setattr(llm.httpx, "get", Script(ollama=["ok"] * 5))
     llm.refresh()
     monkeypatch.setattr(llm.httpx, "get", Script(wsl=["ok"]))
     llm.refresh()
-    monkeypatch.setattr(llm.httpx, "get", Script())
+    monkeypatch.setattr(llm.httpx, "get", Script(ollama=["ok"] * 5))
     assert llm.refresh() == FALLBACK  # one miss again, still kept
 
 
