@@ -223,7 +223,7 @@ It held exactly 10 pending connects every time, all to addresses that never answ
 
 - `100.121.51.35` is the GPU PC's Ubuntu boot. Tailscale has listed it offline for 17 days, because
   the PC runs Windows.
-- `100.88.71.33:2222` is the planned SSH probe that Windows doesn't serve yet.
+- `100.88.71.33:2222` is the SSH probe of the Windows boot, which Windows didn't serve yet (it does now; see Operate).
 
 Colima's user-mode network (gvisor-tap-vsock) allows at most 10 connects in flight, and it silently
 drops new SYNs beyond that. On the macOS host, a connect to an offline tailnet peer stays pending for
@@ -278,8 +278,10 @@ docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool prom/p
 - **Find a trace:** every gateway response carries `x-trace-id`. Paste it into Grafana → Explore → Tempo.
 - **Tailnet senders:** the iMac runs `tailscale serve --bg --tcp 4317 tcp://127.0.0.1:4317` for vLLM's
   OTLP/gRPC.
-- **Pending:** `GpuPcWslDown` needs a Windows-native port that the Colima VM can reach. The plan is
-  `tailscale serve --bg --tcp 2222 tcp://127.0.0.1:22` on the GPU PC's Windows boot; the probe already
-  targets `100.88.71.33:2222`. Until then that probe fails, so the alert stays silent. The outage is
-  still caught by the `chat-on-gpu` SLO, which pages within 30 minutes of a full fallback
-  (the 6x/6 h rule; tested), and by `GpuPcLlmOffline`.
+- **GPU PC liveness probe:** `GpuPcWslDown` needs a Windows-native port that the Colima VM can reach.
+  Windows' own ports don't answer from the VM, so the GPU PC's Windows boot runs
+  `tailscale serve --bg --tcp 2222 tcp://127.0.0.1:22` (set up 2026-11-14; it persists across
+  reboots). From the iMac, the blackbox `tcp_connect` probe of `100.88.71.33:2222` succeeds in 25 ms,
+  Prometheus has `probe_success{job="blackbox-gpu-pc", boot="windows"} = 1`, and with vLLM up the
+  alert's expression returns nothing. The outage is also caught by the `chat-on-gpu` SLO, which pages
+  within 30 minutes of a full fallback (the 6x/6 h rule; tested), and by `GpuPcLlmOffline`.
