@@ -1,0 +1,30 @@
+# Blackbox exporter modules for synthetic probes (targets are in prometheus.yml).
+modules:
+  # Public gateway health. Only proves the Worker answers, not that the GPU does.
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+  # "Is the machine up at all?" for the GPU PC's Windows boot: its OpenSSH server, exposed to the
+  # tailnet on port 2222 with `tailscale serve` on Windows (like vLLM's 8000). Paired with vLLM's
+  # own `up` series this separates "PC off" from "Windows up, WSL down". Two things that did NOT
+  # work from the iMac's Colima VM (2026-11-14): Windows' native port 22 (times out from the VM,
+  # works from the macOS host) and ICMP (Colima's user-mode network answers pings itself, even
+  # for the offline Ubuntu boot).
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+  # The API's /health/gpu always answers 200; the body says which backend answered.
+  # Success only when the active backend is vLLM (backend "openai") and it lists models,
+  # i.e. chat is served by the GPU rather than the Ollama fallback.
+  http_llm_on_vllm:
+    prober: http
+    timeout: 25s  # /health/gpu probes every LLM endpoint inline; measured 18.6 s with the Ubuntu boot off
+    http:
+      valid_status_codes: [200]
+      fail_if_body_not_matches_regexp:
+        - '"gpu":"ok","backend":"openai"'

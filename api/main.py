@@ -37,6 +37,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 import llm
+import tracing
 
 from jobs import (
     claim_imac_job,
@@ -82,6 +83,7 @@ app = FastAPI(title="Homelab API", version="0.8.0", lifespan=lifespan)
 app.include_router(rag_router)
 app.include_router(vision_router)
 prometheus_middleware(app)
+tracing.setup(app)  # no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set
 
 
 @app.get("/metrics")
