@@ -1,0 +1,278 @@
+# Default values for the homelab chart.
+#
+# Every component maps to a service in ../../docker-compose.yml and can be switched off with
+# <component>.enabled. Third-party images are pinned to exact versions (compose floats some of
+# them on :latest). api, worker and web are built from source (api/, worker/, homelab-web) and
+# are not published to a registry: build and push them, or import them into the cluster, then
+# set image.repository/tag. See charts/README.md.
+
+# --- Secrets -----------------------------------------------------------------------------------
+# The chart never renders a Secret. It reads an existing one whose keys are the same names as
+# .env, so `kubectl create secret generic homelab-secrets --from-env-file=.env` works.
+# Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, API_KEY, WORKER_API_KEY,
+# GRAFANA_PASSWORD. Optional: GRAFANA_USER, LLM_API_KEY, LLM_FALLBACK_API_KEY,
+# REACTION_SERVE_KEY. POSTGRES_USER/PASSWORD go into a URL, so keep them URL-safe (hex).
+secrets:
+  existingSecret: homelab-secrets
+
+# Non-secret settings for api (same names as .env). Rendered into the homelab-config ConfigMap.
+config:
+  LLM_BACKEND: auto
+  LLM_URL: http://100.121.51.35:8000/v1
+  LLM_FALLBACK_URL: http://100.88.71.33:8000/v1
+  LLM_DEFAULT_MODEL: qwen2.5-1.5b-instruct
+  LLM_MAX_TOKENS: "1024"
+  GPU_URL: http://100.88.71.33:11434
+  GPU_VISION_URL: http://100.88.71.33:8100
+  JOB_NOTIFY_ENABLED: "true"
+
+# Argo CD sync waves (lower syncs first; Argo waits for each wave to be Healthy).
+# Postgres and Redis come up before api, like compose's depends_on.
+syncWaves:
+  config: -3
+  postgres: -2
+  redis: -2
+  qdrant: -1
+  pushgateway: -1
+  api: 0
+  worker: 1
+  web: 1
+  mlflow: 1
+  prometheus: 1
+  grafana: 2
+  ingress: 3
+
+# Default StorageClass for every PVC ("" = cluster default, e.g. k3s local-path).
+storageClass: ""
+imagePullSecrets: []
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+
+# api, worker and mlflow wait for `pg_isready` in an initContainer (compose: service_healthy).
+waitForPostgres:
+  enabled: true
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+# --- Application ---------------------------------------------------------------------------------
+api:
+  enabled: true
+  image:
+    repository: homelab-api
+    tag: "0.8.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8000
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  # GET /health has no dependencies (api/main.py), so it is safe for liveness.
+  livenessProbe:
+    httpGet: { path: /health, port: http }
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readinessProbe:
+    httpGet: { path: /health, port: http }
+    periodSeconds: 10
+    timeoutSeconds: 3
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+
+worker:
+  enabled: true
+  image:
+    repository: homelab-worker
+    tag: "0.8.0"
+    pullPolicy: IfNotPresent
+  workerId: imac-worker
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    # fastembed loads the embedding model in-process
+    limits: { memory: 2Gi }
+  # The worker is a poll loop with no HTTP port; no probes (it exits non-zero on fatal errors
+  # and the kubelet restarts it).
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+
+web:
+  enabled: true
+  image:
+    repository: homelab-web
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  port: 3000
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  # TCP, not GET /: the home page server-renders api /health/gpu, which waits on the GPU PC's
+  # LLM backend. Found on k3d, where that backend is unreachable and GET / took >5 s.
+  readinessProbe:
+    tcpSocket: { port: http }
+    periodSeconds: 10
+  livenessProbe:
+    tcpSocket: { port: http }
+    periodSeconds: 20
+  nodeSelector: {}
+  tolerations: []
+
+# --- State -------------------------------------------------------------------------------------
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 16.12-alpine
+    pullPolicy: IfNotPresent
+  # Mount files/postgres/*.sql (copies of ../../postgres) at /docker-entrypoint-initdb.d.
+  # They run only when the data directory is empty, exactly like compose.
+  initScripts: true
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  # alpine postgres image: uid/gid 70
+  podSecurityContext:
+    runAsUser: 70
+    runAsGroup: 70
+    fsGroup: 70
+    seccompProfile: { type: RuntimeDefault }
+  nodeSelector: {}
+  tolerations: []
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7.4.7-alpine
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 512Mi }
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  nodeSelector: {}
+  tolerations: []
+
+qdrant:
+  enabled: true
+  image:
+    repository: qdrant/qdrant
+    tag: v1.20.1
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 2Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# --- Observability -------------------------------------------------------------------------------
+pushgateway:
+  enabled: true
+  image:
+    repository: prom/pushgateway
+    tag: v1.11.5
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  nodeSelector: {}
+  tolerations: []
+
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: v3.16.0
+    pullPolicy: IfNotPresent
+  retention: 15d
+  # Empty: use files/prometheus/prometheus.yml (a copy of ../../prometheus/config/prometheus.yml).
+  # Set to a full prometheus.yml string to replace it.
+  configOverride: ""
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 2Gi }
+  podSecurityContext:
+    runAsUser: 65534
+    runAsNonRoot: true
+    fsGroup: 65534
+    seccompProfile: { type: RuntimeDefault }
+  nodeSelector: {}
+  tolerations: []
+
+grafana:
+  enabled: true
+  image:
+    repository: grafana/grafana
+    tag: 13.2.6
+    pullPolicy: IfNotPresent
+  # Datasources and dashboards come from files/grafana/ (copies of ../../grafana/).
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  podSecurityContext:
+    runAsUser: 472
+    runAsGroup: 0
+    fsGroup: 472
+    seccompProfile: { type: RuntimeDefault }
+  nodeSelector: {}
+  tolerations: []
+
+mlflow:
+  enabled: true
+  image:
+    repository: ghcr.io/mlflow/mlflow
+    tag: v2.19.0
+    pullPolicy: IfNotPresent
+  # Same as compose: psycopg2-binary is pip-installed at start, so the pod needs PyPI access.
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# --- Ingress (replaces the caddy service) --------------------------------------------------------
+# compose runs `caddy reverse-proxy --from :80 --to web:3000`. On k3s the bundled Traefik
+# ingress controller does that job, so the chart ships an Ingress instead of a caddy Pod.
+ingress:
+  enabled: true
+  className: traefik
+  annotations: {}
+  # host "" matches any Host header (compose's ":80" site address).
+  hosts:
+    - host: ""
+      paths:
+        - { path: /, service: web, port: 3000 }
+  tls: []

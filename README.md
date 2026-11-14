@@ -124,6 +124,24 @@ browser → grafana-proxy Worker (workers.dev) → Workers VPC Service → tunne
 
 Grafana's full UI stays private: http://100.91.113.98:3000 on the tailnet, with the admin login.
 
+## Kubernetes and GitOps (optional path)
+
+Compose on the iMac is production. Next to it, [`charts/homelab`](charts) is a Helm chart for
+the same services (Traefik Ingress in place of Caddy, secrets from an existing Secret, config
+from the repo's own Prometheus/Grafana/Postgres files), and [`argocd/`](argocd) has Argo CD
+deploy it from `main` with automated sync, prune and selfHeal, Postgres and Redis first.
+
+Proven on a local k3d cluster (k3s v1.36.6), not yet on the homelab's k3s node:
+`helm lint --strict` and kubeconform clean (90/90 resources), 32/32 helm-unittest tests,
+`helm install --wait` with 10/10 pods ready in 61 s, Argo CD Synced/Healthy 87 s after the
+Application was created, and manual drift (scaled or deleted Deployments, an edited ConfigMap)
+reverted in 2 to 5 s. Details, how to run it and the limits: [docs/GITOPS.md](docs/GITOPS.md).
+
+```bash
+bash charts/test.sh       # lint, kubeconform, unit tests (Docker only)
+bash charts/test-k3d.sh   # throwaway k3d cluster: helm install, Argo CD sync, selfHeal
+```
+
 ## Layout
 
 | Path | Purpose |
@@ -137,7 +155,9 @@ Grafana's full UI stays private: http://100.91.113.98:3000 on the tailnet, with 
 | `cloudflare/` | Tunnel connector (`mos-imac`) for the [public dashboards](#public-dashboards); outbound only |
 | `caddy/` | Caddyfile variants (LAN default, public HTTPS template) |
 | `scripts/` | Bootstrap, start, migrate, backup, config sync, Caddy helpers |
-| `docs/` | [API.md](docs/API.md), [OPERATIONS.md](docs/OPERATIONS.md), [JOBS.md](docs/JOBS.md) |
+| `charts/` | Helm chart `homelab` for the same stack, plus its tests ([charts/README.md](charts/README.md)) |
+| `argocd/` | Argo CD install (pinned v3.6.1), AppProject and Application for `charts/homelab`; local k3d overlay |
+| `docs/` | [API.md](docs/API.md), [OPERATIONS.md](docs/OPERATIONS.md), [JOBS.md](docs/JOBS.md), [GITOPS.md](docs/GITOPS.md) |
 | `data/` | Persistent volumes (gitignored) |
 | `backups/` | `pg_dump` output from the backup and migrate scripts (not in `.gitignore`; never commit it) |
 
@@ -208,6 +228,7 @@ names only; see `.env.example` and the table in [docs/API.md](docs/API.md#enviro
 | [docs/API.md](docs/API.md) | Every endpoint, auth, side effects, LLM backend selection, env vars |
 | [docs/JOBS.md](docs/JOBS.md) | Job queue design: states, types, leases, retries, routing |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: cold start, deploy, migrations, backup/restore, common failures |
+| [docs/GITOPS.md](docs/GITOPS.md) | Helm chart + Argo CD: architecture, how to run, measured results on k3d, limits |
 | [homelab: web-ui.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/web-ui.md) | Web UI service notes |
 | [homelab: vision-reactions.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/vision-reactions.md) | Reaction CNN service notes |
 

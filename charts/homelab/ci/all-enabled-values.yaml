@@ -1,0 +1,47 @@
+# Every component and option on, including the non-default branches (custom StorageClass,
+# TLS host, persistence off for a few components, pull secrets, config override).
+secrets: { existingSecret: my-homelab-secrets }
+storageClass: fast-ssd
+imagePullSecrets:
+  - name: ghcr
+api:
+  replicas: 2
+  extraEnv:
+    - { name: METRICS_REFRESH_SEC, value: "30" }
+  nodeSelector: { kubernetes.io/os: linux }
+worker:
+  workerId: k8s-worker
+web: { enabled: true }
+postgres:
+  persistence: { enabled: true, size: 20Gi, storageClass: local-path }
+redis:
+  persistence: { enabled: false }
+qdrant: { enabled: true }
+pushgateway: { enabled: true }
+prometheus:
+  configOverride: |
+    global:
+      scrape_interval: 30s
+    scrape_configs:
+      - job_name: homelab-api
+        static_configs:
+          - targets: ["api:8000"]
+grafana:
+  persistence: { enabled: false }
+mlflow:
+  persistence: { enabled: false }
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  hosts:
+    - host: homelab.example.com
+      paths:
+        - { path: /, service: web, port: 3000 }
+    - host: grafana.homelab.example.com
+      paths:
+        - { path: /, service: grafana, port: 3000 }
+  tls:
+    - hosts: [homelab.example.com, grafana.homelab.example.com]
+      secretName: homelab-tls

@@ -1,0 +1,34 @@
+# Values for a throwaway local cluster (k3d on Docker Desktop). Used by charts/test-k3d.sh and
+# argocd/overlays/local-k3d. Not for the homelab.
+#
+# - api/worker/web images are built from this repo and ../homelab-web, then imported into k3d
+#   with `k3d image import` (no registry), hence the :local tags and pullPolicy Never.
+# - The Secret "homelab-secrets" is created by the test script with random throwaway values.
+# - config (LLM_URL, GPU_URL, ...) and prometheus.yml keep their tailnet addresses. Pods reach
+#   them only through the Docker host's Tailscale connection, and only the GPU PC boot that is
+#   currently up answers. Nothing in the chart needs a GPU, so no component is disabled.
+api:
+  image: { repository: homelab-api, tag: local, pullPolicy: Never }
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+worker:
+  image: { repository: homelab-worker, tag: local, pullPolicy: Never }
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+web:
+  image: { repository: homelab-web, tag: local, pullPolicy: Never }
+postgres:
+  persistence: { enabled: true, size: 1Gi }
+redis:
+  persistence: { enabled: true, size: 256Mi }
+qdrant:
+  persistence: { enabled: true, size: 1Gi }
+prometheus:
+  retention: 1d
+  persistence: { enabled: true, size: 1Gi }
+grafana:
+  persistence: { enabled: true, size: 256Mi }
+mlflow:
+  persistence: { enabled: true, size: 256Mi }

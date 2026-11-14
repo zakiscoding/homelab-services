@@ -1,0 +1,117 @@
+{{- if .Values.mlflow.enabled }}
+{{- $c := .Values.mlflow }}
+{{- if $c.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-artifacts
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+  annotations:
+    # Same wave as the workload: k3s local-path binds on first consumer, so a claim in an
+    # earlier wave would stay Pending and stall the sync.
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- $sc := $c.persistence.storageClass | default .Values.storageClass }}
+  {{- if $sc }}
+  storageClassName: {{ $sc | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $c.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "mlflow") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "mlflow") | nindent 8 }}
+    spec:
+      {{- include "homelab.podCommon" (dict "ctx" $ "comp" $c) | nindent 6 }}
+      {{- with (include "homelab.waitForPostgres" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      containers:
+        - name: mlflow
+          image: {{ include "homelab.image" $c.image }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          # Same command as docker-compose.yml. Uses the "mlflow" database that
+          # files/postgres/007_mlflow.sql creates on first boot.
+          command: ["/bin/bash", "-c"]
+          args:
+            - >-
+              pip install -q psycopg2-binary &&
+              exec mlflow server
+              --host=0.0.0.0
+              --port=5000
+              --backend-store-uri="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow"
+              --default-artifact-root=/mlflow-artifacts
+              --serve-artifacts
+          env:
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "POSTGRES_USER") | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "POSTGRES_PASSWORD") | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 5000
+          # pip install runs before the server starts: allow up to 5 minutes.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: artifacts
+              mountPath: /mlflow-artifacts
+      volumes:
+        - name: artifacts
+          {{- if $c.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: mlflow-artifacts
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+spec:
+  selector:
+    {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "mlflow") | nindent 4 }}
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+{{- end }}

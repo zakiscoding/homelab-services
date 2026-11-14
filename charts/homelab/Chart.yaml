@@ -1,0 +1,18 @@
+apiVersion: v2
+name: homelab
+description: >-
+  The homelab-services stack (FastAPI gateway, Postgres job queue, Redis, Qdrant, iMac
+  worker, Prometheus, Pushgateway, Grafana, MLflow, web UI) packaged for Kubernetes.
+  A GitOps path next to the Docker Compose deployment, not a replacement for it.
+type: application
+version: 0.1.0
+# api/main.py FastAPI version
+appVersion: "0.8.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/zakiscoding/homelab-services
+sources:
+  - https://github.com/zakiscoding/homelab-services
+keywords: [homelab, fastapi, postgres, qdrant, prometheus, grafana, mlflow]
+maintainers:
+  - name: zakiscoding
+    url: https://github.com/zakiscoding

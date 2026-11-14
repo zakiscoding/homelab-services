@@ -1,0 +1,42 @@
+suite: Argo CD sync waves bring state up before the API
+templates:
+  - templates/postgres.yaml
+  - templates/redis.yaml
+  - templates/api.yaml
+  - templates/configmap.yaml
+  - templates/worker.yaml
+tests:
+  - it: the init-script ConfigMap is in wave -3
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: ConfigMap }
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-wave"]
+          value: "-3"
+  - it: postgres is in wave -2
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-wave"]
+          value: "-2"
+  - it: redis is in wave -2
+    template: templates/redis.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-wave"]
+          value: "-2"
+  - it: api is in wave 0
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-wave"]
+          value: "0"
+  - it: the worker follows the api in wave 1
+    template: templates/worker.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-wave"]
+          value: "1"

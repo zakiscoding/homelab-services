@@ -1,0 +1,7 @@
+# The homelab AppProject + Application, as deployed against GitHub main:
+#   kubectl apply -k argocd/base
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - project.yaml
+  - application.yaml

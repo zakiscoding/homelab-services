@@ -1,0 +1,33 @@
+homelab {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) is installed in namespace {{ .Release.Namespace }}.
+
+Enabled components:
+{{- range $name := list "postgres" "redis" "qdrant" "api" "worker" "web" "pushgateway" "prometheus" "grafana" "mlflow" }}
+{{- if (index $.Values $name).enabled }}
+  - {{ $name }}
+{{- end }}
+{{- end }}
+
+Secrets are read from the existing Secret "{{ .Values.secrets.existingSecret }}". The chart does
+not create it. If pods sit in CreateContainerConfigError, create it first, for example:
+
+  kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.secrets.existingSecret }} --from-env-file=.env
+
+Check the rollout:
+
+  kubectl -n {{ .Release.Namespace }} get pods
+{{- if .Values.api.enabled }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/api {{ .Values.api.port }}:{{ .Values.api.port }}
+  curl -s http://localhost:{{ .Values.api.port }}/health
+{{- end }}
+{{- if .Values.grafana.enabled }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/grafana 3000:3000
+{{- end }}
+{{- if .Values.ingress.enabled }}
+
+The web UI is behind Ingress "homelab" (class {{ .Values.ingress.className | default "cluster default" }}).
+{{- end }}
+{{- if and .Values.api.enabled (hasPrefix "100." .Values.config.LLM_URL) }}
+
+Note: LLM_URL ({{ .Values.config.LLM_URL }}) is a tailnet address. /chat and /rag/query only
+work if the cluster nodes can reach the GPU PC over Tailscale; /health does not depend on it.
+{{- end }}
