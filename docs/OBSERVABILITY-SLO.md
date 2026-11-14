@@ -116,6 +116,54 @@ networking with `--network-address`), which takes every iMac service down. Meanw
   probing host's problems don't page as gateway outages.
 - The `chat-on-gpu` page that is firing is correct: chat through the API really is on the broken fallback.
 
+### Where the drops happen, and step 1 of the fix (2026-11-14)
+
+The same test, 20 tries each with a 5 s timeout ("slow" = over 1 s), run while the GPU PC's vLLM was
+stopped for a benchmark, so the tailnet targets are WSL Prometheus `:9090` and the laptop:
+
+| From | Tailnet (GPU PC) | Tailnet (laptop) | Internet |
+|---|---|---|---|
+| macOS host | 20/20 | 20/20 | 20/20 |
+| Colima VM | 19/20, 3 slow | 20/20, 1 slow | 17/20, 3 slow |
+| Container, bridge network | 19/20, 2 slow | 18/20, 3 slow | 14/20, 8 slow |
+| Container, host network | 18/20, 3 slow | 20/20 | 12/20, 11 slow |
+
+The VM itself already loses connections, so this is Colima's user-mode network (`limactl usernet`,
+a userspace NAT on macOS, up since 2026-10-23), not Docker's bridge. Host networking does not help.
+The drop rate varies with load: earlier the same night containers reached the tailnet 6 times in 20.
+
+**Step 1, no downtime: make the API tolerate it** ([api/llm.py](../api/llm.py)).
+
+- Each backend check retries a dropped connection: 3 tries of 3 s each. An HTTP answer is final.
+- Checks run in a background thread every 30 s, so requests read a cached choice and never wait on
+  a check. The exception is the first request after an API restart, which runs the first check itself
+  (about 18 s with the Ubuntu boot off).
+- A working vLLM endpoint is kept until it fails two checks in a row.
+- Ollama gets a 5 s connect and 60 s read timeout. A dead Ollama used to hold a chat for 133 s; with
+  vLLM down, a chat now fails in 5.2 s with `Ollama unreachable`.
+- If neither vLLM nor Ollama answers a check, stay on the last vLLM that worked. A dead Ollama can
+  only fail, while a vLLM request may get through a slow connect.
+- Cache vLLM's model list for 5 minutes, so a chat opens one connection instead of two.
+- Tests script dropped connections, a hung Ollama and the fallback rules: 17/17 API tests pass.
+
+| Measured with vLLM up (24 chats, 12 s apart) | Chats OK | Answered by | Failures |
+|---|---:|---|---|
+| Before (2026-11-14 02:30–02:45, 4 chats) | 0/4 | Ollama fallback, every time | 502 after 132–135 s |
+| After the retry, background check and "stay on vLLM" rules (03:41–03:52) | 13/24 | vLLM, every time | 11 × 502: the chat's own connection to vLLM timed out (15 s), 1 × 140 s |
+
+So the API now keeps chat on the GPU and fails fast, but on this network about half the chats still
+fail, because the connection to vLLM itself drops. The client side can't fix that; the VM network has
+to be fixed (steps 2 and 3).
+
+The model-list cache landed after that run. Its own measurement (03:54–04:04) doesn't count: another
+session stopped vLLM for a benchmark at 03:57. One more gap it showed: right after an API restart there
+is no "last vLLM that worked" yet, so if the first check fails, chat goes to Ollama until a check
+succeeds.
+
+Still open: Colima itself. Step 2 is a test `colima restart` (fresh user-mode network, about 3–5 min
+of iMac downtime). Step 3, if that doesn't hold, is switching to vmnet networking (`socket_vmnet`,
+`network.address: true`). Both need a downtime window.
+
 ## Operate
 
 ```bash
