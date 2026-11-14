@@ -255,6 +255,9 @@ The fix (commit b1675d8) doesn't restart anything for Prometheus:
 | Caddy `:80` from the laptop | 200 in 0.3–0.5 s (3/3) |
 | API `/health/gpu` from the laptop | `gpu: ok` on vLLM, 0.2–0.3 s (3/3; was 15 s and `down`) |
 | Pending connects, before the API restart | 3–6 of 10, all from the API's prober |
+| API recreated with the fix (11 s down) | |
+| Pending connects, 2–3 min after | 1–2 of 10, only the 2-minute Prometheus jobs |
+| Web UI / Caddy / `/health/gpu` from the laptop, 5 tries each | all 200: 0.16–0.74 s / 0.20–0.42 s / 0.19–0.29 s |
 
 Rule for anything new on the iMac's Colima: never poll an address that may be offline at a short
 interval from inside the VM. Each such poll holds a slot for over a minute.
