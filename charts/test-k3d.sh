@@ -132,12 +132,13 @@ step_helm() {
 
 refresh_git_server() {
   rm -rf "$work/homelab-services.git"
-  git clone -q --bare --branch "$BRANCH" "$repo" "$work/homelab-services.git"
+  # Committed state only: Argo CD sees exactly what a push would publish
+  git clone -q --bare --single-branch --branch "$BRANCH" "$(winpath "$repo")" "$(winpath "$work/homelab-services.git")"
   local pod; pod=$(kubectl -n gitserver get pod -l app=git-server -o jsonpath='{.items[0].metadata.name}')
-  tar -C "$work" -cf "$work/repo.tar" homelab-services.git
-  kubectl -n gitserver cp "$(winpath "$work/repo.tar")" "$pod:/tmp/repo.tar"
-  kubectl -n gitserver exec "$pod" -- sh -c 'rm -rf /srv/git/homelab-services.git && tar -C /srv/git -xf /tmp/repo.tar'
-  echo "git server serves $BRANCH at $(git -C "$repo" rev-parse --short HEAD)"
+  # Stream over exec stdin (kubectl cp misreads Windows "C:\..." paths as pod names)
+  tar -C "$work" -cf - homelab-services.git | kubectl -n gitserver exec -i "$pod" -- \
+    sh -c 'rm -rf /srv/git/homelab-services.git && tar -C /srv/git -xof -'
+  echo "git server serves $BRANCH at $(git -C "$(winpath "$repo")" rev-parse --short HEAD)"
 }
 
 argocd_cli() {
