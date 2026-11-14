@@ -1,0 +1,120 @@
+{
+  "baseline_async": {
+    "primary": "pg1",
+    "replication": [
+      {
+        "standby": "pg2",
+        "state": "streaming",
+        "sync": "async",
+        "replay_lag_ms": 0.556,
+        "bytes_behind": 0
+      }
+    ],
+    "acked": 1260,
+    "errors": 0,
+    "commit_ms": {
+      "p50": 1.419,
+      "p99": 75.69,
+      "max": 1073.067
+    },
+    "present": 1260,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "wall_s": 43.1
+  },
+  "baseline_sync": {
+    "primary": "pg1",
+    "replication": [
+      {
+        "standby": "pg2",
+        "state": "streaming",
+        "sync": "sync",
+        "replay_lag_ms": 0.508,
+        "bytes_behind": 0
+      }
+    ],
+    "acked": 1282,
+    "errors": 0,
+    "commit_ms": {
+      "p50": 1.961,
+      "p99": 111.4,
+      "max": 447.977
+    },
+    "present": 1282,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "wall_s": 43.0
+  },
+  "failover_async": {
+    "killed": "pg1",
+    "promoted": "pg2",
+    "t_kill": 1794627476.261684,
+    "detect_s": 5.828,
+    "promote_s": 1.164,
+    "acked": 804,
+    "errors": 36,
+    "commit_ms": {
+      "p50": 1.394,
+      "p99": 67.626,
+      "max": 550.573
+    },
+    "last_ack_before_fault_s": 0.009,
+    "first_ack_after_fault_s": 0.06,
+    "rto_s": 0.07,
+    "max_commit_ms": 550.573,
+    "reconnected_to": [
+      "pg2"
+    ],
+    "present": 804,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "rejoin": {
+      "error": "pg1 not streaming from pg2"
+    },
+    "wall_s": 126.4
+  },
+  "failover_sync": {
+    "killed": "pg2",
+    "promoted": "pg1",
+    "t_kill": 1794627602.5997288,
+    "detect_s": 4.219,
+    "promote_s": 0.657,
+    "acked": 934,
+    "errors": 27,
+    "commit_ms": {
+      "p50": 1.174,
+      "p99": 43.034,
+      "max": 378.376
+    },
+    "last_ack_before_fault_s": null,
+    "first_ack_after_fault_s": 5.132,
+    "rto_s": 5.132,
+    "max_commit_ms": 378.376,
+    "reconnected_to": [
+      "pg1"
+    ],
+    "present": 934,
+    "lost_acked": 0,
+    "lost_seqs": [],
+    "present_not_acked": 0,
+    "rejoin": {
+      "error": " s, total=0.001 s; sync files=0, longest=0.000 s, average=0.000 s; distance=0 kB, estimate=1460 kB; lsn=0/3675810, redo lsn=0/3675810\npg_rewind: servers diverged at WAL location 0/361E3D8 on timeline 2\npg_rewind: error: could not open file \"/var/lib/postgresql/data/pgdata/pg_wal/000000010000000000000002\": No such file or directory\npg_rewind: error: could not find previous WAL record at 0/2000100\n\n"
+    },
+    "wall_s": 52.7
+  },
+  "partition_async": {
+    "error": "docker network disconnect pg-ha-lab_default pg-ha-lab-None-1 -> 1: Error response from daemon: No such container: pg-ha-lab-None-1\n",
+    "wall_s": 11.3
+  },
+  "partition_sync": {
+    "error": "docker network disconnect pg-ha-lab_default pg-ha-lab-None-1 -> 1: Error response from daemon: No such container: pg-ha-lab-None-1\n",
+    "wall_s": 11.5
+  },
+  "slot_wal": {
+    "error": "docker pause pg-ha-lab-None-1 -> 1: Error response from daemon: No such container: pg-ha-lab-None-1\n",
+    "wall_s": 1.5
+  }
+}

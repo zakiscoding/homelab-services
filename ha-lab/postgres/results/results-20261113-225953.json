@@ -1,0 +1,17 @@
+{
+  "slot_wal": {
+    "primary": "pg1",
+    "write_s": 42.22,
+    "slot_after": "reserved|771751720",
+    "pg_wal_mb": "512",
+    "standby_state_after_unpause": "streaming",
+    "standby_errors": [],
+    "repair": {
+      "method": "basebackup",
+      "rebuild_s": 148.08,
+      "db_size": "563 MB"
+    },
+    "write_to_repaired_s": 150.38,
+    "wall_s": 261.5
+  }
+}

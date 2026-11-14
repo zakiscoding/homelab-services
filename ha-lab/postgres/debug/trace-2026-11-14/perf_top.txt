@@ -1,0 +1,40 @@
+    92.14%  swapper          [kernel.kallsyms]                               
+            |          
+            |--85.24%--cpuidle_idle_call
+            |          do_idle
+            |          cpu_startup_entry
+            |          |          
+            |          |--64.12%--secondary_start_kernel
+            |          |          __secondary_switched
+            |          |          
+            |           --21.12%--rest_init
+            |                     arch_call_rest_init
+            |                     start_kernel
+            |                     __primary_switched
+            |          
+            |--5.68%--default_idle_call
+            |          cpuidle_idle_call
+            |          do_idle
+            |          cpu_startup_entry
+            |          |          
+            |          |--4.19%--secondary_start_kernel
+            |          |          __secondary_switched
+            |          |          
+            |           --1.50%--rest_init
+            |                     arch_call_rest_init
+            |                     start_kernel
+            |                     __primary_switched
+            |          
+             --0.61%--handle_softirqs
+                       __do_softirq
+                       ____do_softirq
+                       call_on_irq_stack
+                       do_softirq_own_stack
+                       __irq_exit_rcu
+                       irq_exit_rcu
+                       el1_interrupt
+                       el1h_64_irq_handler
+                       el1h_64_irq
+                       |          
+                        --0.55%--cpuidle_idle_call
+                                  do_idle
