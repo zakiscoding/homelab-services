@@ -160,9 +160,30 @@ session stopped vLLM for a benchmark at 03:57. One more gap it showed: right aft
 is no "last vLLM that worked" yet, so if the first check fails, chat goes to Ollama until a check
 succeeds.
 
-Still open: Colima itself. Step 2 is a test `colima restart` (fresh user-mode network, about 3–5 min
-of iMac downtime). Step 3, if that doesn't hold, is switching to vmnet networking (`socket_vmnet`,
-`network.address: true`). Both need a downtime window.
+**Step 2: `colima restart` (2026-11-14 04:22–04:39 UTC). It did not help.**
+
+- Backups taken first: a Postgres dump with all 11 tables, and a copy of `colima.yaml`.
+- `colima stop` took 41 s and `colima start` 286 s. Docker did not restart the `unless-stopped`
+  containers by itself; I started all 19 with `docker start`. Each kept its configuration and data.
+- For several minutes after boot the VM's I/O pressure (`/proc/pressure/io`, avg10) was 70–93%, and
+  services took 3–5 min to start listening.
+
+Same test, 20 tries per target, before and after:
+
+| From | Target | Before (2 rounds) | After (2 rounds) |
+|---|---|---|---|
+| macOS host | all three | 20/20 every time | 20/20 every time |
+| Colima VM | GPU PC (tailnet) | 16, 4 | 4, 6 |
+| Colima VM | laptop (tailnet) | 20, 14 | 19, 17 |
+| Colima VM | internet | 11, 12 | 9, 2 |
+| container | GPU PC (tailnet) | 16, 0 | 12, 16 |
+| container | laptop (tailnet) | 17, 13 | 2, 5 |
+| container | internet | 11, 12 | 20, 20 |
+
+A fresh user-mode network process is just as lossy, so this isn't slow degradation over weeks.
+The problem is the user-mode network itself, or how it interacts with Tailscale on macOS. The next
+candidate is step 3, vmnet networking (`socket_vmnet`, `network.address: true`). That needs `sudo`
+on the iMac and about 10 min of downtime.
 
 ## Operate
 
