@@ -18,3 +18,16 @@ datasources:
     editable: false
     jsonData:
       timeInterval: 5s
+  # Traces from the OpenTelemetry Collector (observability/). Click a trace ID in Explore.
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: false
+    editable: false
+    jsonData:
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

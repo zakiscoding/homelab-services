@@ -15,6 +15,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       API_KEY: ${API_KEY}
       WORKER_API_KEY: ${WORKER_API_KEY}
+      # Traces to the collector below; set OTEL_EXPORTER_OTLP_ENDPOINT= (empty) in .env to turn off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: homelab-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +102,52 @@ services:
     networks:
       - backend
 
+  # --- Tracing, SLOs and alerting (docs/OBSERVABILITY-SLO.md) ---
+  # Config files are copied in by scripts/sync-observability.sh (Colima bind-mount quirk, as for
+  # Prometheus), so on a fresh host start these, run the script, and they restart with it.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      # Tailnet senders (vLLM on the GPU PC) reach these via `tailscale serve --tcp 4317/4318`.
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    depends_on: [tempo]
+    networks: [backend]
+
+  tempo:
+    image: grafana/tempo:2.10.10
+    restart: unless-stopped
+    user: "0"
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./data/tempo:/var/tempo
+    networks: [backend]
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.0
+    restart: unless-stopped
+    user: "0"  # like prometheus/grafana here: ./data on the external drive is root-owned in the VM
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./data/alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks: [backend]
+
+  # Host networking on purpose: on this Colima VM, outbound connections from containers behind
+  # Docker's bridge NAT time out intermittently (about 2 in 3 to tailnet hosts and the public
+  # gateway, measured 2026-11-14) while the VM itself connects reliably. Probes must not inherit
+  # that, or they'd page about the network path instead of the target. See docs/OBSERVABILITY-SLO.md.
+  blackbox:
+    image: prom/blackbox-exporter:v0.29.1
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config.file=/etc/blackbox/blackbox.yml", "--web.listen-address=:9115"]
+
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
@@ -107,6 +156,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # blackbox exporter on the VM's host network
     volumes:
       # Config injected via scripts/sync-prometheus-config.sh (Colima bind-mount quirk)
       - ./data/prometheus:/prometheus
