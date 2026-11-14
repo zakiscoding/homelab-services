@@ -1,0 +1,45 @@
+suite: ConfigMaps are built from the repo's own config files
+templates:
+  - templates/prometheus.yaml
+  - templates/grafana.yaml
+  - templates/postgres.yaml
+tests:
+  - it: prometheus.yml is the repo copy (scrapes api:8000)
+    template: templates/prometheus.yaml
+    documentSelector: { path: kind, value: ConfigMap }
+    asserts:
+      - matchRegex:
+          path: data["prometheus.yml"]
+          pattern: 'targets: \["api:8000"\]'
+  - it: configOverride replaces prometheus.yml
+    template: templates/prometheus.yaml
+    documentSelector: { path: kind, value: ConfigMap }
+    set:
+      prometheus.configOverride: "scrape_configs: []"
+    asserts:
+      - equal:
+          path: data["prometheus.yml"]
+          value: "scrape_configs: []"
+  - it: all four Grafana dashboards are provisioned
+    template: templates/grafana.yaml
+    documentSelector: { path: metadata.name, value: grafana-dashboards }
+    asserts:
+      - exists: { path: 'data["homelab-overview.json"]' }
+      - exists: { path: 'data["homelab-stack.json"]' }
+      - exists: { path: 'data["gpu-node.json"]' }
+      - exists: { path: 'data["gophergrid.json"]' }
+  - it: the Grafana datasource points at the in-cluster prometheus Service
+    template: templates/grafana.yaml
+    documentSelector: { path: metadata.name, value: grafana-datasources }
+    asserts:
+      - matchRegex:
+          path: data["prometheus.yml"]
+          pattern: "url: http://prometheus:9090"
+  - it: postgres init scripts include the mlflow database
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: ConfigMap }
+    asserts:
+      - matchRegex:
+          path: data["007_mlflow.sql"]
+          pattern: CREATE DATABASE mlflow
+      - exists: { path: 'data["init.sql"]' }
