@@ -7,8 +7,12 @@ modules:
     http:
       preferred_ip_protocol: ip4
       valid_status_codes: [200]
-  # "Is the machine up at all?" for the GPU PC's Windows boot: its OpenSSH server on the tailnet.
-  # Paired with vLLM's own `up` series this separates "PC off" from "Windows up, WSL down".
+  # "Is the machine up at all?" for the GPU PC's Windows boot: its OpenSSH server, exposed to the
+  # tailnet on port 2222 with `tailscale serve` on Windows (like vLLM's 8000). Paired with vLLM's
+  # own `up` series this separates "PC off" from "Windows up, WSL down". Two things that did NOT
+  # work from the iMac's Colima VM (2026-11-14): Windows' native port 22 (times out from the VM,
+  # works from the macOS host) and ICMP (Colima's user-mode network answers pings itself, even
+  # for the offline Ubuntu boot).
   tcp_connect:
     prober: tcp
     timeout: 5s
@@ -19,7 +23,7 @@ modules:
   # i.e. chat is served by the GPU rather than the Ollama fallback.
   http_llm_on_vllm:
     prober: http
-    timeout: 10s
+    timeout: 25s  # /health/gpu probes every LLM endpoint inline; measured 18.6 s with the Ubuntu boot off
     http:
       valid_status_codes: [200]
       fail_if_body_not_matches_regexp:

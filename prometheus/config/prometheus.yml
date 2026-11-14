@@ -93,6 +93,8 @@ scrape_configs:
 
   # Synthetic "is chat on the GPU?": /health/gpu reports which LLM backend answers.
   - job_name: blackbox-llm
+    scrape_interval: 60s
+    scrape_timeout: 30s
     metrics_path: /probe
     params: { module: [http_llm_on_vllm] }
     static_configs:
@@ -104,7 +106,8 @@ scrape_configs:
     metrics_path: /probe
     params: { module: [tcp_connect] }
     static_configs:
-      - targets: ["100.88.71.33:22"]
+      # Windows: `tailscale serve --bg --tcp 2222 tcp://127.0.0.1:22` on the GPU PC (see blackbox.yml)
+      - targets: ["100.88.71.33:2222"]
         labels: { node: gpu-pc, boot: windows }
       - targets: ["100.121.51.35:22"]
         labels: { node: gpu-pc, boot: ubuntu }
