@@ -1,6 +1,6 @@
 {
   "uid": "gpu-node",
-  "title": "GPU node (RTX 5070, zak-gpu-node)",
+  "title": "GPU PC (RTX 5070)",
   "tags": [
     "gpu",
     "dcgm"
@@ -14,29 +14,7 @@
     "to": "now"
   },
   "templating": {
-    "list": [
-      {
-        "name": "gpu",
-        "label": "GPU",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "gpu-node-prom"
-        },
-        "query": {
-          "query": "label_values(DCGM_FI_DEV_GPU_UTIL, gpu)",
-          "refId": "gpu"
-        },
-        "definition": "label_values(DCGM_FI_DEV_GPU_UTIL, gpu)",
-        "includeAll": true,
-        "multi": true,
-        "current": {
-          "text": "All",
-          "value": "$__all"
-        },
-        "refresh": 1
-      }
-    ]
+    "list": []
   },
   "annotations": {
     "list": []
@@ -61,7 +39,7 @@
       "id": 2,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -72,10 +50,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_GPU_UTIL{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_GPU_UTIL",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -120,7 +98,7 @@
       "id": 3,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -131,10 +109,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_FB_USED{gpu=~\"$gpu\"} / DCGM_FI_DEV_FB_TOTAL{gpu=~\"$gpu\"} * 100",
+          "expr": "DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL * 100",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -180,7 +158,7 @@
       "id": 4,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -191,10 +169,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_POWER_USAGE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_POWER_USAGE",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -230,7 +208,7 @@
       "id": 5,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -241,10 +219,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_GPU_TEMP{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_GPU_TEMP",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -287,7 +265,7 @@
       "id": 6,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -298,10 +276,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_SM_CLOCK{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_SM_CLOCK",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -336,7 +314,7 @@
       "id": 7,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -347,10 +325,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_PCIE_LINK_GEN{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_PCIE_LINK_GEN",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -385,7 +363,7 @@
       "id": 8,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -396,10 +374,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_PCIE_LINK_WIDTH{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_PCIE_LINK_WIDTH",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -447,7 +425,7 @@
       "id": 10,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -458,20 +436,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_GPU_UTIL{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_GPU_UTIL",
           "legendFormat": "GPU util (driver) gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL",
           "legendFormat": "memory controller gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -505,7 +483,7 @@
       "id": 11,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -516,47 +494,47 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_PROF_SM_ACTIVE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_SM_ACTIVE",
           "legendFormat": "SM active",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_PROF_SM_OCCUPANCY{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_SM_OCCUPANCY",
           "legendFormat": "SM occupancy",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "C",
-          "expr": "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE",
           "legendFormat": "tensor pipe active",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "D",
-          "expr": "DCGM_FI_PROF_DRAM_ACTIVE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_DRAM_ACTIVE",
           "legendFormat": "DRAM active",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "E",
-          "expr": "DCGM_FI_PROF_GR_ENGINE_ACTIVE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_GR_ENGINE_ACTIVE",
           "legendFormat": "graphics engine active",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -590,7 +568,7 @@
       "id": 12,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -601,20 +579,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_FB_USED{gpu=~\"$gpu\"} * 1024 * 1024",
+          "expr": "DCGM_FI_DEV_FB_USED * 1024 * 1024",
           "legendFormat": "used gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_DEV_FB_TOTAL{gpu=~\"$gpu\"} * 1024 * 1024",
+          "expr": "DCGM_FI_DEV_FB_TOTAL * 1024 * 1024",
           "legendFormat": "total gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -646,7 +624,7 @@
       "id": 13,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -657,20 +635,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_POWER_USAGE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_POWER_USAGE",
           "legendFormat": "draw gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_DEV_POWER_MGMT_LIMIT{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_POWER_MGMT_LIMIT",
           "legendFormat": "limit gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -702,7 +680,7 @@
       "id": 14,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -713,20 +691,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_GPU_TEMP{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_GPU_TEMP",
           "legendFormat": "GPU temp gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_DEV_FAN_SPEED{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_FAN_SPEED",
           "legendFormat": "fan % gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -758,7 +736,7 @@
       "id": 15,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -769,29 +747,29 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_SM_CLOCK{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_SM_CLOCK",
           "legendFormat": "SM gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_DEV_MEM_CLOCK{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_MEM_CLOCK",
           "legendFormat": "memory gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "C",
-          "expr": "DCGM_FI_DEV_MAX_SM_CLOCK{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_MAX_SM_CLOCK",
           "legendFormat": "SM max gpu{{gpu}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -823,7 +801,7 @@
       "id": 16,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -834,20 +812,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_PROF_PCIE_TX_BYTES{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_PCIE_TX_BYTES",
           "legendFormat": "TX (GPU to host)",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_PROF_PCIE_RX_BYTES{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_PCIE_RX_BYTES",
           "legendFormat": "RX (host to GPU)",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -880,7 +858,7 @@
       "id": 17,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -891,20 +869,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "DCGM_FI_DEV_CLOCKS_EVENT_REASONS{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
           "legendFormat": "throttle reason bitmask",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
           "refId": "B",
-          "expr": "DCGM_FI_DEV_PSTATE{gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_DEV_PSTATE",
           "legendFormat": "P-state",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -949,7 +927,7 @@
       "id": 19,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -964,7 +942,7 @@
           "legendFormat": "CPU busy %",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
@@ -973,7 +951,7 @@
           "legendFormat": "iowait %",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -1006,7 +984,7 @@
       "id": 20,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -1021,7 +999,7 @@
           "legendFormat": "used",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
@@ -1030,7 +1008,7 @@
           "legendFormat": "total",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],
@@ -1062,7 +1040,7 @@
       "id": 21,
       "datasource": {
         "type": "prometheus",
-        "uid": "gpu-node-prom"
+        "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
@@ -1077,7 +1055,7 @@
           "legendFormat": "load1",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         },
         {
@@ -1086,7 +1064,7 @@
           "legendFormat": "root fs used %",
           "datasource": {
             "type": "prometheus",
-            "uid": "gpu-node-prom"
+            "uid": "prometheus"
           }
         }
       ],

@@ -18,7 +18,7 @@
 - **Postgres job queue**: Postgres is the single source of truth for jobs, with leases, retries and priorities. Redis only sends wake signals. See [docs/JOBS.md](docs/JOBS.md).
 - **RAG**: the iMac worker chunks and embeds documents (fastembed, CPU) into Qdrant. `/rag/query` retrieves from Qdrant and answers with the LLM.
 - **LLM routing**: with `LLM_BACKEND=auto`, chat uses vLLM on the GPU PC's Ubuntu boot when it is up and falls back to Ollama on its Windows boot.
-- **Observability**: Prometheus, Pushgateway (GPU metrics from Windows) and Grafana. The GPU node's own Prometheus is added as a second datasource, so one Grafana shows everything.
+- **Observability**: the homelab's central Prometheus and Grafana. Prometheus scrapes this stack and, over the tailnet, the GPU PC (its local Prometheus via `/federate`, plus vLLM on either boot) and [GopherGrid](https://github.com/zakiscoding/gophergrid)'s schedulers and workers. Four dashboards are [public and read-only](#public-dashboards).
 - **MLflow** (:5001): experiment tracking, backed by the Postgres `mlflow` database.
 
 ## Architecture
@@ -81,8 +81,8 @@ flowchart LR
     Graf -->|"second datasource"| NodeProm
 ```
 
-The GPU PC dual-boots, so only one of the Windows or Ubuntu groups is online at a time. Grafana
-panels for the GPU node are empty while the PC runs Windows.
+The GPU PC dual-boots, so only one of the Windows or Ubuntu groups is online at a time. The
+central Prometheus scrapes both boots' addresses, so GPU panels work in either one.
 
 ## Quickstart
 
@@ -103,6 +103,27 @@ Then open http://100.91.113.98:3081 (web UI) and http://100.91.113.98:3000 (Graf
 
 On the Windows laptop, create a `.env` for local work with `.\scripts\bootstrap-env.ps1`.
 
+## Public dashboards
+
+**https://grafana-proxy.vllm-gateway.workers.dev** lists four read-only dashboards anyone can open
+or link to: Homelab overview, Homelab stack, GPU PC (RTX 5070) and GopherGrid.
+
+```
+browser → grafana-proxy Worker (workers.dev) → Workers VPC Service → tunnel "mos-imac" → grafana:3000
+```
+
+- No router ports are open. `cloudflare/compose.yml` runs `cloudflared`, which only connects out.
+- Each dashboard is a Grafana *public dashboard* link: it runs only that dashboard's saved
+  queries. The Worker ([`grafana-proxy`](https://github.com/zakiscoding/gpu-systems-lab/tree/main/grafana-proxy)
+  in gpu-systems-lab) forwards only those dashboards and Grafana's static files. Login, the
+  admin UI, the API, Explore and datasource proxies return 404, and no cookies pass through.
+- Public dashboards don't support template variables, so the shared dashboards have none.
+- To share another dashboard: in Grafana, **Share → Share externally**, then add its access
+  token to `PUBLIC_DASHBOARDS` in the Worker's `wrangler.jsonc` and deploy.
+- If Grafana or the iMac is down, the link answers 503.
+
+Grafana's full UI stays private: http://100.91.113.98:3000 on the tailnet, with the admin login.
+
 ## Layout
 
 | Path | Purpose |
@@ -111,8 +132,9 @@ On the Windows laptop, create a `.env` for local work with `.\scripts\bootstrap-
 | `api/` | FastAPI app: `main.py` (routes, worker API), `jobs.py` (queue), `llm.py` (backend selection), `rag_*.py`, `vision_routes.py`, `train_plan.py`, `metrics.py`, `job_notify.py` |
 | `worker/` | iMac worker: `poll_imac.py` (claim loop, lease renewal), `run_ingest.py`, `run_embed.py`, `run_train_prep.py`, `job_wake.py` |
 | `postgres/` | `init.sql` (first boot) and idempotent migrations `002`–`007` |
-| `prometheus/config/` | Scrape config (prometheus, api, qdrant, pushgateway) |
-| `grafana/` | Datasource and dashboard provisioning; dashboards: Homelab ML Platform, Homelab Stack, GPU node |
+| `prometheus/config/` | Scrape config: this stack, the GPU PC (federated DCGM and node metrics, vLLM) and GopherGrid |
+| `grafana/` | Datasource and dashboard provisioning; dashboards: Homelab ML Platform, Homelab Stack, GPU PC, GopherGrid |
+| `cloudflare/` | Tunnel connector (`mos-imac`) for the [public dashboards](#public-dashboards); outbound only |
 | `caddy/` | Caddyfile variants (LAN default, public HTTPS template) |
 | `scripts/` | Bootstrap, start, migrate, backup, config sync, Caddy helpers |
 | `docs/` | [API.md](docs/API.md), [OPERATIONS.md](docs/OPERATIONS.md), [JOBS.md](docs/JOBS.md) |

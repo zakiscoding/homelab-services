@@ -1,0 +1,23 @@
+# Cloudflare Tunnel connector for mos-imac (tunnel "mos-imac"). Outbound only: no published
+# ports, and no public hostnames. The grafana-proxy Worker in gpu-systems-lab reaches Grafana
+# through a Workers VPC Service on this tunnel and serves only public read-only dashboards.
+#
+#   umask 077 && echo "TUNNEL_TOKEN=..." > cloudflare/.env   # never commit .env
+#   docker-compose -f cloudflare/compose.yml up -d
+#
+# Start the main stack first: the homelab-services_backend network must exist.
+name: homelab-cloudflared
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7
+    container_name: homelab-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file: .env  # TUNNEL_TOKEN
+    networks: [backend]
+
+networks:
+  backend:
+    external: true
+    name: homelab-services_backend
