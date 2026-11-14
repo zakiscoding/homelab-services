@@ -1,0 +1,66 @@
+# Postgres streaming-replication + failover lab for the iMac job queue.
+# Runs on a COPY of the live `homelab` DB (restored from a pg_dump by chaos.py setup, over
+# docker exec stdin); never touches the live homelab-services-postgres-1. No ports are
+# published and nothing is bind-mounted (the iMac's Colima VM does not mount the external
+# drive, so scripts are baked into the images). Driven by chaos.py.
+name: pg-ha-lab
+
+x-node: &node
+  build: ./node
+  image: pg-ha-lab-node:16
+  entrypoint: ["/lab/node.sh"]
+  environment: &env
+    POSTGRES_USER: app
+    POSTGRES_DB: homelab
+    POSTGRES_PASSWORD: ${LAB_PG_PASSWORD:?run chaos.py, it writes .env}
+    REPL_PASSWORD: ${LAB_REPL_PASSWORD:?run chaos.py, it writes .env}
+    PGDATA: /var/lib/postgresql/data/pgdata
+    # pg_rewind needs checksums or wal_log_hints *recorded in pg_control*. A command-line
+    # -c wal_log_hints=on is not enough: pg_rewind's own crash-recovery pass starts postgres
+    # without it and the check fails (found on the first failover run).
+    POSTGRES_INITDB_ARGS: "--data-checksums"
+  mem_limit: 512m
+  cpus: 1.0
+  stop_grace_period: 5s
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U app -d homelab -h 127.0.0.1"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+services:
+  pg1:
+    <<: *node
+    hostname: pg1
+    environment:
+      <<: *env
+      NODE_NAME: pg1
+      PRIMARY_HOST: ${PG1_PRIMARY_HOST:-}      # empty data dir + empty: initdb, start as primary
+    volumes:
+      - pg1:/var/lib/postgresql/data
+
+  pg2:
+    <<: *node
+    hostname: pg2
+    environment:
+      <<: *env
+      NODE_NAME: pg2
+      PRIMARY_HOST: ${PG2_PRIMARY_HOST:-pg1}   # empty data dir: pg_basebackup from it, hot standby
+    volumes:
+      - pg2:/var/lib/postgresql/data
+    depends_on:
+      pg1: {condition: service_healthy}
+    profiles: ["standby"]       # started by chaos.py setup after the seed restore
+
+  client:
+    build: ./client
+    environment:
+      PGPASSWORD: ${LAB_PG_PASSWORD}
+      # libpq multi-host: try pg1 then pg2, keep only a node that accepts writes
+      LAB_DSN: "host=pg1,pg2 port=5432,5432 dbname=homelab user=app target_session_attrs=read-write connect_timeout=1"
+    command: ["sleep", "infinity"]
+    mem_limit: 256m
+
+volumes:
+  pg1:
+  pg2:
