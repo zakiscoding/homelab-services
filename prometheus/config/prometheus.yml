@@ -34,6 +34,14 @@ scrape_configs:
 
   # GPU PC: pull its local Prometheus (dcgm-exporter, node-exporter). Only one boot is up
   # at a time, so one of these two targets is always down.
+  #
+  # Why the Ubuntu-boot targets have their own jobs with a 2-minute interval: Colima's
+  # user-mode network (gvisor-tap-vsock) lets at most 10 outbound connects be pending at once
+  # and silently drops new SYNs beyond that. A connect to an offline tailnet peer stays pending
+  # on the macOS host for over a minute, so scraping a dead boot every 15 s filled those slots
+  # and made other outbound connections from the VM fail at random (vLLM's /metrics, the
+  # API's backend probe, chat). See docs/OBSERVABILITY-SLO.md, "The 10-connect limit".
+  # Each split job sets job= back to the shared name, so queries and alerts see one job.
   - job_name: gpu-pc-federate
     honor_labels: true
     metrics_path: /federate
@@ -42,15 +50,27 @@ scrape_configs:
     static_configs:
       - targets: ["100.88.71.33:9090"]
         labels: { node: gpu-pc, boot: windows }
+
+  - job_name: gpu-pc-federate-ubuntu
+    scrape_interval: 2m
+    honor_labels: true
+    metrics_path: /federate
+    params:
+      "match[]": ['{job=~"dcgm|node"}']
+    static_configs:
       - targets: ["100.121.51.35:9090"]
-        labels: { node: gpu-pc, boot: ubuntu }
+        labels: { node: gpu-pc, boot: ubuntu, job: gpu-pc-federate }
 
   - job_name: vllm
     static_configs:
       - targets: ["100.88.71.33:8000"]
         labels: { node: gpu-pc, boot: windows }
+
+  - job_name: vllm-ubuntu
+    scrape_interval: 2m
+    static_configs:
       - targets: ["100.121.51.35:8000"]
-        labels: { node: gpu-pc, boot: ubuntu }
+        labels: { node: gpu-pc, boot: ubuntu, job: vllm }
 
   # GopherGrid (github.com/zakiscoding/gophergrid, deploy/homelab)
   - job_name: gophergrid-scheduler
@@ -111,7 +131,10 @@ scrape_configs:
     relabel_configs: *blackbox
 
   # Is each boot of the GPU PC up at all? (SSH on the tailnet.) Pairs with job="vllm" above.
+  # 2-minute interval: at least one of these is always unreachable (see the 10-connect note
+  # above). GpuPcWslDown waits 15 minutes, so the coarser probe costs it nothing.
   - job_name: blackbox-gpu-pc
+    scrape_interval: 2m
     metrics_path: /probe
     params: { module: [tcp_connect] }
     static_configs:

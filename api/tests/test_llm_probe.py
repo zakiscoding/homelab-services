@@ -145,3 +145,25 @@ def test_chat_reuses_the_model_list(monkeypatch):
     for _ in range(3):
         assert asyncio.run(llm._served_models("http://wsl.test:8000/v1")) == ["qwen2.5-1.5b-instruct"]
     assert len(calls) == 1
+
+
+def test_endpoint_that_answered_last_is_probed_first(monkeypatch):
+    # The PC is in the Windows boot: the Ubuntu-boot primary is an offline peer. After one full
+    # check, later checks must not dial it while the fallback keeps answering (each dead dial
+    # holds one of Colima's 10 pending-connect slots for over a minute).
+    monkeypatch.setattr(llm.httpx, "get", Script(ubuntu=[], wsl=["ok"]))
+    assert llm.refresh() == FALLBACK
+    fake = Script(wsl=["ok"] * 3)
+    monkeypatch.setattr(llm.httpx, "get", fake)
+    for _ in range(3):
+        assert llm.refresh() == FALLBACK
+    assert fake.calls == ["wsl"] * 3
+
+
+def test_primary_is_probed_again_when_the_last_good_one_stops(monkeypatch):
+    monkeypatch.setattr(llm.httpx, "get", Script(wsl=["ok"]))
+    assert llm.refresh() == FALLBACK
+    fake = Script(wsl=[], ubuntu=["ok"])  # rebooted into Ubuntu
+    monkeypatch.setattr(llm.httpx, "get", fake)
+    assert llm.refresh() == PRIMARY
+    assert fake.calls == ["wsl"] * 3 + ["ubuntu"]

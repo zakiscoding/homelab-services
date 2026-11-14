@@ -87,6 +87,21 @@ def _ollama_answers() -> bool:
     return False
 
 
+def _probe_order() -> list[tuple[str, str]]:
+    """OPENAI_ENDPOINTS with the one that answered last moved to the front.
+
+    Only one boot of the GPU PC is up at a time, so in preference order the first URL is often
+    an offline tailnet peer. Probing it every AUTO_RECHECK_S left connects to it pending on the
+    iMac for over a minute each, and Colima's user-mode network drops every new connection once
+    10 are pending (docs/OBSERVABILITY-SLO.md, "The 10-connect limit"). Checking the working
+    endpoint first means the dead one is only dialled when the working one stops answering.
+    """
+    last = _auto["last_good"]
+    if last not in OPENAI_ENDPOINTS:
+        return list(OPENAI_ENDPOINTS)
+    return [last] + [e for e in OPENAI_ENDPOINTS if e != last]
+
+
 def refresh() -> tuple[str, str] | None:
     """Re-check the endpoints and update the cached choice. Returns the endpoint now in use.
 
@@ -97,7 +112,7 @@ def refresh() -> tuple[str, str] | None:
       requests there have long timeouts and usually get through a slow connect, while a dead
       Ollama can only fail.
     """
-    found = next((e for e in OPENAI_ENDPOINTS if _answers(*e)), None)
+    found = next((e for e in _probe_order() if _answers(*e)), None)
     with _lock:
         current = _auto["endpoint"]
         if found is not None:
