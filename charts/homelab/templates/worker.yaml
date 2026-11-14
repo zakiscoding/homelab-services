@@ -1,0 +1,53 @@
+{{- if .Values.worker.enabled }}
+{{- $c := .Values.worker }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "worker") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "worker") | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  # One worker id: never run two copies during a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "worker") | nindent 8 }}
+    spec:
+      {{- include "homelab.podCommon" (dict "ctx" $ "comp" $c) | nindent 6 }}
+      {{- with (include "homelab.waitForPostgres" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "homelab.image" $c.image }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          env:
+            - name: API_BASE_URL
+              value: http://api:{{ .Values.api.port }}
+            - name: QDRANT_URL
+              value: http://qdrant:6333
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            - name: WORKER_ID
+              value: {{ $c.workerId | quote }}
+            - name: JOB_NOTIFY_ENABLED
+              value: {{ .Values.config.JOB_NOTIFY_ENABLED | toString | quote }}
+            {{- include "homelab.databaseEnv" . | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "WORKER_API_KEY") | nindent 12 }}
+            {{- with $c.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+{{- end }}

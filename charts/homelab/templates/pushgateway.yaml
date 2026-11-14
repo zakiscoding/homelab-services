@@ -1,0 +1,56 @@
+{{- if .Values.pushgateway.enabled }}
+{{- $c := .Values.pushgateway }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "pushgateway") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "pushgateway") | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "pushgateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "pushgateway") | nindent 8 }}
+    spec:
+      {{- include "homelab.podCommon" (dict "ctx" $ "comp" $c) | nindent 6 }}
+      containers:
+        - name: pushgateway
+          image: {{ include "homelab.image" $c.image }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 9091
+          readinessProbe:
+            httpGet: { path: /-/ready, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pushgateway
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "pushgateway") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "pushgateway") | nindent 4 }}
+spec:
+  selector:
+    {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "pushgateway") | nindent 4 }}
+  ports:
+    - name: http
+      port: 9091
+      targetPort: http
+{{- end }}

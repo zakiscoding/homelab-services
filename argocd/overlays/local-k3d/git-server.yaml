@@ -1,0 +1,53 @@
+# Read-only git daemon (git:// on 9418) for the local Argo CD test. charts/test-k3d.sh copies
+# a bare clone of the worktree into /srv/git/homelab-services.git with kubectl cp, and again
+# after each new commit. Test-only: no auth, no persistence.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitserver
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-server
+  namespace: gitserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: git-server }
+  template:
+    metadata:
+      labels: { app: git-server }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: git
+          # git-daemon is a separate Alpine package (not in alpine/git), so install it at start
+          image: alpine:3.22
+          command: ["sh", "-c", "apk add --no-cache git-daemon >/dev/null && exec git daemon --reuseaddr --export-all --base-path=/srv/git --verbose /srv/git"]
+          ports:
+            - name: git
+              containerPort: 9418
+          readinessProbe:
+            tcpSocket: { port: git }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - name: repos
+              mountPath: /srv/git
+      volumes:
+        - name: repos
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-server
+  namespace: gitserver
+spec:
+  selector: { app: git-server }
+  ports:
+    - name: git
+      port: 9418
+      targetPort: git

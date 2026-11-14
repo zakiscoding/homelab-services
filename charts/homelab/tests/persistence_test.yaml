@@ -1,0 +1,79 @@
+suite: persistent volumes for stateful components
+templates:
+  - templates/postgres.yaml
+  - templates/redis.yaml
+  - templates/grafana.yaml
+  - templates/mlflow.yaml
+tests:
+  - it: postgres gets a 10Gi ReadWriteOnce claim on the cluster default StorageClass
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 10Gi
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.accessModes
+          value: [ReadWriteOnce]
+      - notExists:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+  - it: a component storageClass wins over the global one
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    set:
+      storageClass: global-sc
+      postgres.persistence.storageClass: fast-ssd
+      postgres.persistence.size: 50Gi
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: fast-ssd
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 50Gi
+  - it: the global storageClass applies when a component sets none
+    template: templates/redis.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    set: { storageClass: global-sc }
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: global-sc
+  - it: persistence off falls back to emptyDir and drops the claim
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    set: { postgres.persistence.enabled: false }
+    asserts:
+      - notExists:
+          path: spec.volumeClaimTemplates
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: data, emptyDir: {} }
+  - it: postgres keeps PGDATA in a subdirectory of the volume
+    template: templates/postgres.yaml
+    documentSelector: { path: kind, value: StatefulSet }
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+  - it: the grafana PVC survives helm uninstall and Argo CD prune
+    template: templates/grafana.yaml
+    documentSelector: { path: kind, value: PersistentVolumeClaim }
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-options"]
+          value: Prune=false
+      - equal:
+          path: spec.resources.requests.storage
+          value: 2Gi
+  - it: mlflow without persistence renders only the Deployment and Service
+    template: templates/mlflow.yaml
+    set: { mlflow.persistence.enabled: false }
+    asserts:
+      - hasDocuments: { count: 2 }
+      - not: true
+        isKind:
+          of: PersistentVolumeClaim

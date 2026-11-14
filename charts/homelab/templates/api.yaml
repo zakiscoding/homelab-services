@@ -1,0 +1,72 @@
+{{- if .Values.api.enabled }}
+{{- $c := .Values.api }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "api") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "api") | nindent 4 }}
+spec:
+  replicas: {{ $c.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "api") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "homelab.podCommon" (dict "ctx" $ "comp" $c) | nindent 6 }}
+      {{- with (include "homelab.waitForPostgres" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "homelab.image" $c.image }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $c.port }}
+          envFrom:
+            - configMapRef:
+                name: homelab-config
+          env:
+            {{- include "homelab.databaseEnv" . | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "API_KEY") | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "WORKER_API_KEY") | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "LLM_API_KEY" "optional" true) | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "LLM_FALLBACK_API_KEY" "optional" true) | nindent 12 }}
+            {{- include "homelab.secretEnv" (dict "ctx" $ "name" "REACTION_SERVE_KEY" "optional" true) | nindent 12 }}
+            {{- with $c.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml $c.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml $c.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "api") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "api") | nindent 4 }}
+spec:
+  selector:
+    {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "api") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $c.port }}
+      targetPort: http
+{{- end }}

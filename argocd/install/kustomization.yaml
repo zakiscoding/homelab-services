@@ -1,0 +1,12 @@
+# Argo CD itself, from the pinned upstream manifest (non-HA, single namespace "argocd").
+#
+#   kubectl create namespace argocd
+#   kubectl apply --server-side --force-conflicts -k argocd/install
+#
+# --server-side is needed: the ApplicationSet CRD is larger than the client-side apply
+# annotation limit. Bump the tag here to upgrade; nothing else in this repo pins it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml

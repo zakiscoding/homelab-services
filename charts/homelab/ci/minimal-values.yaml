@@ -1,0 +1,9 @@
+# Smallest useful install: api + its state. Everything optional is off.
+worker: { enabled: false }
+web: { enabled: false }
+qdrant: { enabled: false }
+pushgateway: { enabled: false }
+prometheus: { enabled: false }
+grafana: { enabled: false }
+mlflow: { enabled: false }
+ingress: { enabled: false }

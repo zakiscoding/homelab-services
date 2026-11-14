@@ -1,0 +1,62 @@
+{{- if .Values.web.enabled }}
+{{- $c := .Values.web }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "web") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "web") | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "web") | nindent 8 }}
+    spec:
+      {{- include "homelab.podCommon" (dict "ctx" $ "comp" $c) | nindent 6 }}
+      containers:
+        - name: web
+          image: {{ include "homelab.image" $c.image }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $c.port }}
+          env:
+            - name: HOMELAB_API_URL
+              value: http://api:{{ .Values.api.port }}
+            - name: HOMELAB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "homelab.secretName" . }}
+                  key: API_KEY
+          readinessProbe:
+            {{- toYaml $c.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml $c.livenessProbe | nindent 12 }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "web") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "web") | nindent 4 }}
+spec:
+  selector:
+    {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $c.port }}
+      targetPort: http
+{{- end }}

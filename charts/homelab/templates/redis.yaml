@@ -1,0 +1,69 @@
+{{- if .Values.redis.enabled }}
+{{- $c := .Values.redis }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "redis") | nindent 4 }}
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "redis") | nindent 8 }}
+    spec:
+      {{- include "homelab.podCommon" (dict "ctx" $ "comp" $c) | nindent 6 }}
+      containers:
+        - name: redis
+          image: {{ include "homelab.image" $c.image }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          # compose: redis-server --appendonly yes
+          args: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket: { port: redis }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- if not $c.persistence.enabled }}
+      volumes:
+        {{- include "homelab.emptyDirIfNoPersistence" (dict "comp" $c "name" "data") | nindent 8 }}
+      {{- end }}
+  {{- include "homelab.volumeClaimTemplate" (dict "ctx" $ "comp" $c "name" "data") | nindent 2 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    {{- include "homelab.labels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+  annotations:
+    {{- include "homelab.syncWave" (dict "ctx" $ "component" "redis") | nindent 4 }}
+spec:
+  selector:
+    {{- include "homelab.selectorLabels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+{{- end }}

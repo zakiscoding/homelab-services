@@ -1,0 +1,3 @@
+# Chart files are rendered into ConfigMaps: keep LF everywhere so a Windows checkout renders
+# the same bytes as Argo CD's Linux clone.
+* text=auto eol=lf

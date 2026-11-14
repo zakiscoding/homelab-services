@@ -1,0 +1,85 @@
+suite: every component can be switched off
+templates:
+  - templates/api.yaml
+  - templates/worker.yaml
+  - templates/web.yaml
+  - templates/qdrant.yaml
+  - templates/pushgateway.yaml
+  - templates/prometheus.yaml
+  - templates/grafana.yaml
+  - templates/mlflow.yaml
+  - templates/ingress.yaml
+  - templates/configmap.yaml
+tests:
+  - it: api enabled renders a Deployment and a Service
+    template: templates/api.yaml
+    asserts:
+      - hasDocuments: { count: 2 }
+  - it: api disabled renders nothing and drops its ConfigMap
+    set: { api.enabled: false }
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: templates/api.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/configmap.yaml
+  - it: optional components disabled render nothing
+    set:
+      worker.enabled: false
+      web.enabled: false
+      qdrant.enabled: false
+      pushgateway.enabled: false
+      prometheus.enabled: false
+      grafana.enabled: false
+      mlflow.enabled: false
+      ingress.enabled: false
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: templates/worker.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/web.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/qdrant.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/pushgateway.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/prometheus.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/grafana.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/mlflow.yaml
+      - hasDocuments: { count: 0 }
+        template: templates/ingress.yaml
+  - it: postgres on adds the wait-for-postgres initContainer to api
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: wait-for-postgres
+  - it: postgres off also removes the wait-for-postgres initContainer from api
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    set: { postgres.enabled: false }
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers
+  - it: default images are pinned, never :latest
+    template: templates/grafana.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ":latest$"
+  - it: a :latest tag is rejected by values.schema.json
+    template: templates/qdrant.yaml
+    set: { qdrant.image.tag: latest }
+    asserts:
+      - failedTemplate: {}
+  - it: ingress without a host matches any Host header (compose caddy :80)
+    template: templates/ingress.yaml
+    asserts:
+      - notExists:
+          path: spec.rules[0].host
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service
+          value: { name: web, port: { number: 3000 } }

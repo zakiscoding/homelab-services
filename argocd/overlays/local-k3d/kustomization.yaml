@@ -1,0 +1,27 @@
+# Local proof on a throwaway k3d cluster (charts/test-k3d.sh). Same AppProject and
+# Application as argocd/base, but:
+#   - the source is an in-cluster git daemon serving a bare clone of this worktree, because
+#     the branch is tested before it is pushed to GitHub;
+#   - targetRevision is that branch, and values-local.yaml is layered on top.
+#   kubectl apply -k argocd/overlays/local-k3d
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target: { kind: AppProject, name: homelab }
+    patch: |-
+      - op: add
+        path: /spec/sourceRepos/-
+        value: git://git-server.gitserver.svc.cluster.local/homelab-services.git
+  - target: { kind: Application, name: homelab }
+    patch: |-
+      - op: replace
+        path: /spec/source/repoURL
+        value: git://git-server.gitserver.svc.cluster.local/homelab-services.git
+      - op: replace
+        path: /spec/source/targetRevision
+        value: helm-argocd
+      - op: add
+        path: /spec/source/helm/valueFiles/-
+        value: values-local.yaml
