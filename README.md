@@ -4,7 +4,7 @@
 
 **The iMac control plane: API gateway, Postgres job queue, RAG, web UI hosting and monitoring for the homelab, run with Docker Compose on Colima.**
 
-![host](https://img.shields.io/badge/host-iMac%20M1-555555?style=flat-square&logo=apple&logoColor=white) ![runtime](https://img.shields.io/badge/runtime-Colima%20%2B%20Compose-2496ed?style=flat-square&logo=docker&logoColor=white) ![API](https://img.shields.io/badge/API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white) ![state](https://img.shields.io/badge/state-Postgres%2016-4169e1?style=flat-square&logo=postgresql&logoColor=white) ![RAG](https://img.shields.io/badge/RAG-Qdrant-dc244c?style=flat-square)
+[![CI](https://github.com/zakiscoding/homelab-services/actions/workflows/ci.yml/badge.svg)](https://github.com/zakiscoding/homelab-services/actions/workflows/ci.yml) ![host](https://img.shields.io/badge/host-iMac%20M1-555555?style=flat-square&logo=apple&logoColor=white) ![runtime](https://img.shields.io/badge/runtime-Colima%20%2B%20Compose-2496ed?style=flat-square&logo=docker&logoColor=white) ![API](https://img.shields.io/badge/API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white) ![state](https://img.shields.io/badge/state-Postgres%2016-4169e1?style=flat-square&logo=postgresql&logoColor=white) ![RAG](https://img.shields.io/badge/RAG-Qdrant-dc244c?style=flat-square)
 
 [homelab](https://github.com/zakiscoding/homelab) (docs hub) · **homelab-services** · [homelab-web](https://github.com/zakiscoding/homelab-web) · [homelab-gpu](https://github.com/zakiscoding/homelab-gpu) · [gpu-systems-lab](https://github.com/zakiscoding/gpu-systems-lab)
 
@@ -16,6 +16,7 @@
 
 - **FastAPI gateway** (`api/`, :8000): chat, RAG, vision proxy, job queue and the worker API. Every endpoint is in [docs/API.md](docs/API.md).
 - **Postgres job queue**: Postgres is the single source of truth for jobs, with leases, retries and priorities. Redis only sends wake signals. See [docs/JOBS.md](docs/JOBS.md).
+- **Tracing, SLOs and alerting**: OpenTelemetry traces from the Cloudflare gateway and this API into vLLM (Collector + Tempo), five SLOs with multiwindow burn-rate alerts, and Alertmanager → ntfy. See [docs/OBSERVABILITY-SLO.md](docs/OBSERVABILITY-SLO.md).
 - **RAG**: the iMac worker chunks and embeds documents (fastembed, CPU) into Qdrant. `/rag/query` retrieves from Qdrant and answers with the LLM.
 - **LLM routing**: with `LLM_BACKEND=auto`, chat uses vLLM on the GPU PC's Ubuntu boot when it is up and falls back to Ollama on its Windows boot.
 - **Observability**: the homelab's central Prometheus and Grafana. Prometheus scrapes this stack and, over the tailnet, the GPU PC (its local Prometheus via `/federate`, plus vLLM on either boot) and [GopherGrid](https://github.com/zakiscoding/gophergrid)'s schedulers and workers. Four dashboards are [public and read-only](#public-dashboards).
@@ -228,6 +229,7 @@ names only; see `.env.example` and the table in [docs/API.md](docs/API.md#enviro
 | [docs/API.md](docs/API.md) | Every endpoint, auth, side effects, LLM backend selection, env vars |
 | [docs/JOBS.md](docs/JOBS.md) | Job queue design: states, types, leases, retries, routing |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: cold start, deploy, migrations, backup/restore, common failures |
+| [docs/OBSERVABILITY-SLO.md](docs/OBSERVABILITY-SLO.md) | Traces, SLOs, burn-rate alerts, ntfy delivery, and the Colima egress finding |
 | [docs/GITOPS.md](docs/GITOPS.md) | Helm chart + Argo CD: architecture, how to run, measured results on k3d, limits |
 | [homelab: web-ui.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/web-ui.md) | Web UI service notes |
 | [homelab: vision-reactions.md](https://github.com/zakiscoding/homelab/blob/main/docs/services/vision-reactions.md) | Reaction CNN service notes |

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# This repo has no unit tests yet. CI checks what can be checked without the
+# iMac's live databases: Python syntax and undefined names, shell scripts, and
+# that the Compose and Prometheus configs parse.
+jobs:
+  python:
+    name: Python lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.17.5
+      # E9/F63/F7/F82: syntax errors, bad comparisons, misplaced statements, undefined names.
+      - run: ruff check --select E9,F63,F7,F82 --output-format github .
+      - run: python -m compileall -q api worker
+
+  shell:
+    name: Shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck --version && shellcheck -S warning scripts/*.sh
+
+  config:
+    name: Compose and Prometheus config
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: docker compose config
+        run: |
+          cp .env.example .env
+          echo "GRAFANA_PASSWORD=ci-placeholder" >> .env
+          docker compose config -q
+      - name: promtool check config
+        run: >
+          docker run --rm -v "$PWD/prometheus/config:/cfg:ro" --entrypoint promtool
+          prom/prometheus:v3.7.3 check config /cfg/prometheus.yml

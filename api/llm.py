@@ -4,7 +4,13 @@ LLM_BACKEND=ollama  -> Ollama on GPU_URL (Windows boot of the GPU PC): /api/gene
 LLM_BACKEND=openai  -> vLLM (or any OpenAI-compatible server) on LLM_URL, e.g. the GPU PC's
                        Ubuntu boot: http://100.121.51.35:8000/v1 with LLM_API_KEY
 LLM_BACKEND=auto    -> vLLM when it answers, else Ollama. The GPU PC dual-boots, so chat follows
-                       whichever OS is up. Re-checked at most every AUTO_RECHECK_S seconds.
+                       whichever OS is up. A background thread re-checks every AUTO_RECHECK_S
+                       seconds, so requests never wait on the check.
+
+Each check retries a dropped connection (PROBE_ATTEMPTS x PROBE_TIMEOUT_S), and a working vLLM
+endpoint is kept until it fails two checks in a row. Both exist because the iMac's Colima VM drops
+or delays some outbound connections (docs/OBSERVABILITY-SLO.md): with one 2 s attempt, most checks
+failed and chat fell back to Ollama even while vLLM was healthy.
 
 Optional second vLLM: LLM_FALLBACK_URL / LLM_FALLBACK_API_KEY. In openai/auto mode the first of
 LLM_URL, LLM_FALLBACK_URL that answers is used. On the GPU PC's Windows boot, vLLM runs in WSL
@@ -16,10 +22,13 @@ that actually answered.
 """
 
 import os
+import threading
 import time
 from typing import Any
 
 import httpx
+
+import tracing
 
 MODE = os.environ.get("LLM_BACKEND", "ollama").strip().lower()
 AUTO_RECHECK_S = 30.0
@@ -32,6 +41,10 @@ LLM_FALLBACK_API_KEY = os.environ.get("LLM_FALLBACK_API_KEY", "")
 OPENAI_ENDPOINTS = [(LLM_URL, LLM_API_KEY)] + ([(LLM_FALLBACK_URL, LLM_FALLBACK_API_KEY)] if LLM_FALLBACK_URL else [])
 LLM_DEFAULT_MODEL = os.environ.get("LLM_DEFAULT_MODEL", "qwen2.5-1.5b-instruct")
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
+PROBE_ATTEMPTS = int(os.environ.get("LLM_PROBE_ATTEMPTS", "3"))
+PROBE_TIMEOUT_S = float(os.environ.get("LLM_PROBE_TIMEOUT_S", "3"))
+# A dead Ollama used to hold a chat request for 133 s before failing; fail in a bounded time instead.
+OLLAMA_TIMEOUT = httpx.Timeout(float(os.environ.get("OLLAMA_TIMEOUT_S", "60")), connect=5.0)
 
 OLLAMA_DEFAULT_MODEL = "llama3.2:latest"
 
@@ -40,23 +53,108 @@ class LLMError(Exception):
     """Upstream LLM failure; message is safe to return as an HTTP 502 detail."""
 
 
-_auto: dict[str, Any] = {"checked_at": 0.0, "endpoint": None}
+_auto: dict[str, Any] = {"checked_at": 0.0, "endpoint": None, "misses": 0, "last_good": None}
+_lock = threading.Lock()
+_prober: threading.Thread | None = None
 
 
 def _answers(url: str, key: str) -> bool:
-    """True if an OpenAI-compatible server answers GET /models with 200 within 2s."""
-    try:
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
-        return httpx.get(f"{url}/models", headers=headers, timeout=2.0).status_code == 200
-    except Exception:
-        return False
+    """True if an OpenAI-compatible server answers GET /models with 200.
+
+    Retries only when the connection itself fails (timeout, reset, refused). An HTTP answer is
+    final: a 401 means a wrong key, and retrying won't change that.
+    """
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    for _ in range(PROBE_ATTEMPTS):
+        try:
+            return httpx.get(f"{url}/models", headers=headers, timeout=PROBE_TIMEOUT_S).status_code == 200
+        except httpx.TransportError:
+            continue
+        except Exception:
+            return False
+    return False
+
+
+def _ollama_answers() -> bool:
+    """True if Ollama answers GET /api/tags (same retry rule as _answers)."""
+    for _ in range(PROBE_ATTEMPTS):
+        try:
+            return httpx.get(f"{GPU_URL}/api/tags", timeout=PROBE_TIMEOUT_S).status_code == 200
+        except httpx.TransportError:
+            continue
+        except Exception:
+            return False
+    return False
+
+
+def _probe_order() -> list[tuple[str, str]]:
+    """OPENAI_ENDPOINTS with the one that answered last moved to the front.
+
+    Only one boot of the GPU PC is up at a time, so in preference order the first URL is often
+    an offline tailnet peer. Probing it every AUTO_RECHECK_S left connects to it pending on the
+    iMac for over a minute each, and Colima's user-mode network drops every new connection once
+    10 are pending (docs/OBSERVABILITY-SLO.md, "The 10-connect limit"). Checking the working
+    endpoint first means the dead one is only dialled when the working one stops answering.
+    """
+    last = _auto["last_good"]
+    if last not in OPENAI_ENDPOINTS:
+        return list(OPENAI_ENDPOINTS)
+    return [last] + [e for e in OPENAI_ENDPOINTS if e != last]
+
+
+def refresh() -> tuple[str, str] | None:
+    """Re-check the endpoints and update the cached choice. Returns the endpoint now in use.
+
+    - Hysteresis: if the current endpoint stops answering but did on the previous check, keep it
+      for one more round, so a single bad check doesn't switch chat to Ollama.
+    - Only fall back to Ollama if Ollama itself answers. When neither answers (as when the
+      network drops connections for a minute or two), stay on the last vLLM that worked: chat
+      requests there have long timeouts and usually get through a slow connect, while a dead
+      Ollama can only fail.
+    """
+    found = next((e for e in _probe_order() if _answers(*e)), None)
+    with _lock:
+        current = _auto["endpoint"]
+        if found is not None:
+            _auto["endpoint"], _auto["last_good"], _auto["misses"] = found, found, 0
+        elif current is not None and _auto["misses"] < 1:
+            _auto["misses"] += 1
+        else:
+            _auto["misses"] = 0
+            _auto["endpoint"] = None
+        last_good = _auto["last_good"]
+    if found is None and _auto["endpoint"] is None and last_good is not None and MODE == "auto":
+        if not _ollama_answers():
+            with _lock:
+                _auto["endpoint"] = last_good
+    with _lock:
+        _auto["checked_at"] = time.monotonic()
+        return _auto["endpoint"]
+
+
+def _probe_forever() -> None:
+    while True:
+        time.sleep(AUTO_RECHECK_S)
+        try:
+            refresh()
+        except Exception:  # never let the prober die
+            pass
+
+
+def _ensure_prober() -> None:
+    global _prober
+    with _lock:
+        if _prober is None:
+            _prober = threading.Thread(target=_probe_forever, name="llm-prober", daemon=True)
+            _prober.start()
 
 
 def _openai_endpoint() -> tuple[str, str] | None:
-    """First OPENAI_ENDPOINTS entry that answers, cached for AUTO_RECHECK_S seconds."""
-    if time.monotonic() - _auto["checked_at"] > AUTO_RECHECK_S:
-        _auto["endpoint"] = next((e for e in OPENAI_ENDPOINTS if _answers(*e)), None)
-        _auto["checked_at"] = time.monotonic()
+    """The OPENAI_ENDPOINTS entry chat should use, or None. Checked synchronously only the first
+    time; after that the background prober keeps it current."""
+    if _auto["checked_at"] == 0.0:
+        refresh()
+        _ensure_prober()
     return _auto["endpoint"]
 
 
@@ -107,6 +205,22 @@ async def list_models() -> list[str]:
         return [m.get("name", "") for m in r.json().get("models", []) if m.get("name")]
 
 
+_served: dict[str, tuple[float, list[str]]] = {}
+SERVED_TTL_S = 300.0
+
+
+async def _served_models(url: str) -> list[str]:
+    """vLLM's model list, cached per endpoint for SERVED_TTL_S. Saves one connection per chat,
+    which matters on a network that drops some of them; a stale list only affects which name
+    the request asks for, and vLLM rejects an unknown one with a clear error."""
+    cached = _served.get(url)
+    if cached and time.monotonic() - cached[0] < SERVED_TTL_S:
+        return cached[1]
+    models = await list_models()
+    _served[url] = (time.monotonic(), models)
+    return models
+
+
 def default_model() -> str:
     """Default chat model for the active backend (LLM_DEFAULT_MODEL or llama3.2:latest)."""
     return LLM_DEFAULT_MODEL if is_openai() else OLLAMA_DEFAULT_MODEL
@@ -119,14 +233,23 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
     """
     async with httpx.AsyncClient(timeout=300.0) as client:
         if not is_openai():
-            r = await client.post(
-                f"{GPU_URL}/api/generate", json={"model": model, "prompt": prompt, "stream": False}
-            )
+            try:
+                r = await client.post(
+                    f"{GPU_URL}/api/generate", json={"model": model, "prompt": prompt, "stream": False},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+            except httpx.ConnectTimeout as e:
+                tracing.annotate(**{"llm.backend": "ollama", "llm.model": model})
+                raise LLMError(f"Ollama unreachable: no connection within {OLLAMA_TIMEOUT.connect:.0f} s") from e
+            except httpx.TimeoutException as e:
+                tracing.annotate(**{"llm.backend": "ollama", "llm.model": model})
+                raise LLMError(f"Ollama did not answer within {OLLAMA_TIMEOUT.read:.0f} s") from e
+            tracing.annotate(**{"llm.backend": "ollama", "llm.model": model})
             if r.status_code >= 400:
                 raise LLMError(r.text)
             return r.json().get("response", ""), model
 
-        served = await list_models()
+        served = await _served_models(_openai()[0])
         used = model if model in served else (LLM_DEFAULT_MODEL if LLM_DEFAULT_MODEL in served else served[0])
         r = await client.post(
             f"{_openai()[0]}/chat/completions",
@@ -137,6 +260,7 @@ async def generate(model: str, prompt: str) -> tuple[str, str]:
                 "max_tokens": LLM_MAX_TOKENS,
             },
         )
+        tracing.annotate(**{"llm.backend": "vllm", "llm.endpoint": _openai()[0], "llm.model": used})
         if r.status_code >= 400:
             raise LLMError(r.text)
         data: dict[str, Any] = r.json()
